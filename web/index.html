@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Platform Action Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #1a1a2e;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+            color: #fff;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+            color: #64c864;
+        }
+
+        #game-container {
+            border: 4px solid #505064;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 0 20px rgba(100, 200, 100, 0.3);
+        }
+
+        #game-canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+
+        .controls {
+            margin-top: 20px;
+            text-align: center;
+            color: #888;
+            font-size: 14px;
+        }
+
+        .controls h3 {
+            color: #64c864;
+            margin-bottom: 10px;
+        }
+
+        .controls p {
+            margin: 5px 0;
+        }
+
+        .key {
+            background: #505064;
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin: 0 2px;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            color: #64c864;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <h1>Platform Action Game</h1>
+
+    <div id="loading">Loading...</div>
+
+    <div id="game-container" class="hidden">
+        <canvas id="game-canvas"></canvas>
+    </div>
+
+    <div class="controls hidden" id="controls">
+        <h3>Controls</h3>
+        <p><span class="key">Arrow</span> / <span class="key">WASD</span> Move</p>
+        <p><span class="key">Z</span> / <span class="key">Space</span> Jump</p>
+        <p><span class="key">X</span> Attack (Arrow)</p>
+        <p><span class="key">C</span> Dash</p>
+        <p><span class="key">Tab</span> Show Hitbox</p>
+        <p><span class="key">ESC</span> Pause</p>
+    </div>
+
+    <script src="wasm_exec.js"></script>
+    <script>
+        const go = new Go();
+
+        WebAssembly.instantiateStreaming(fetch("game.wasm"), go.importObject)
+            .then((result) => {
+                document.getElementById("loading").classList.add("hidden");
+                document.getElementById("game-container").classList.remove("hidden");
+                document.getElementById("controls").classList.remove("hidden");
+                go.run(result.instance);
+            })
+            .catch((err) => {
+                document.getElementById("loading").textContent = "Failed to load: " + err;
+                console.error(err);
+            });
+    </script>
+</body>
+</html>
