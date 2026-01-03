@@ -130,11 +130,68 @@ func (s *CombatSystem) updateProjectiles(dt float64) {
 
 		proj.Update(dt)
 
-		// Check wall collision at arrow tip (only if not already stuck)
-		if !proj.Stuck {
-			if s.stage.IsSolidAt(int(proj.X), int(proj.Y)) {
-				proj.StickToWall(5.0)
-			}
+		// Skip movement if stuck
+		if proj.Stuck {
+			continue
+		}
+
+		// Get pixels to move this frame
+		dx, dy := proj.ApplyVelocity(dt)
+
+		// Move with 1-pixel substeps
+		s.moveProjectile(proj, dx, dy)
+	}
+}
+
+// moveProjectile moves projectile with 1-pixel substeps
+func (s *CombatSystem) moveProjectile(proj *entity.Projectile, dx, dy int) {
+	// Determine the number of steps (use the larger of abs(dx) or abs(dy))
+	stepsX := dx
+	stepsY := dy
+	if stepsX < 0 {
+		stepsX = -stepsX
+	}
+	if stepsY < 0 {
+		stepsY = -stepsY
+	}
+
+	totalSteps := stepsX
+	if stepsY > totalSteps {
+		totalSteps = stepsY
+	}
+
+	if totalSteps == 0 {
+		return
+	}
+
+	// Calculate step direction
+	stepX := 0.0
+	stepY := 0.0
+	if dx != 0 || dy != 0 {
+		stepX = float64(dx) / float64(totalSteps)
+		stepY = float64(dy) / float64(totalSteps)
+	}
+
+	// Move 1 step at a time
+	accumX := 0.0
+	accumY := 0.0
+	for i := 0; i < totalSteps; i++ {
+		accumX += stepX
+		accumY += stepY
+
+		// Move by integer pixels
+		moveX := int(accumX)
+		moveY := int(accumY)
+		accumX -= float64(moveX)
+		accumY -= float64(moveY)
+
+		proj.X += float64(moveX)
+		proj.Y += float64(moveY)
+
+		// Check collision at arrow tip
+		if s.stage.IsSolidAt(int(proj.X), int(proj.Y)) {
+			proj.StickToWall(5.0)
+			return
 		}
 	}
 }

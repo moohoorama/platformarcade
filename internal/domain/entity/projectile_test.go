@@ -37,21 +37,26 @@ func TestNewArrow_FacingLeft(t *testing.T) {
 
 func TestProjectile_Update(t *testing.T) {
 	arrow := NewArrow(100, 200, true, 300, 0, 500, 350, 180, 25, true)
-	initialX := arrow.X
 	initialVY := arrow.VY
 
 	dt := 0.016 // One frame at 60fps
 
 	arrow.Update(dt)
 
-	// X should increase (moving right)
-	assert.Greater(t, arrow.X, initialX)
-
 	// VY should increase (gravity pulls down)
 	assert.Greater(t, arrow.VY, initialVY)
+}
 
-	// Distance from start should be greater than 0
-	assert.Greater(t, math.Abs(arrow.X-arrow.StartX), 0.0)
+func TestProjectile_ApplyVelocity(t *testing.T) {
+	arrow := NewArrow(100, 200, true, 300, 0, 500, 350, 180, 25, true)
+
+	dt := 0.016 // One frame at 60fps
+
+	dx, dy := arrow.ApplyVelocity(dt)
+
+	// Should return pixels to move
+	assert.Greater(t, dx, 0) // Moving right
+	assert.Equal(t, 0, dy)   // No vertical movement yet (VY starts at 0 for 0 degree angle)
 }
 
 func TestProjectile_StickToWall(t *testing.T) {

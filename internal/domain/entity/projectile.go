@@ -6,6 +6,8 @@ import "math"
 type Projectile struct {
 	X, Y     float64
 	VX, VY   float64
+	RemX     float64 // Sub-pixel remainder
+	RemY     float64
 	StartX   float64
 	Active   bool
 	IsPlayer bool // true if shot by player, false if by enemy
@@ -87,7 +89,7 @@ func NewArrowDirected(x, y, targetX, targetY, speed, gravityAccel, maxFallSpeed,
 	}
 }
 
-// Update updates the projectile physics
+// Update updates the projectile physics (gravity only, movement handled separately)
 func (p *Projectile) Update(dt float64) {
 	if !p.Active {
 		return
@@ -109,10 +111,21 @@ func (p *Projectile) Update(dt float64) {
 	if p.VY > p.MaxFallSpeed {
 		p.VY = p.MaxFallSpeed
 	}
+}
 
-	// Update position
-	p.X += p.VX * dt
-	p.Y += p.VY * dt
+// ApplyVelocity calculates pixels to move and accumulates remainder
+func (p *Projectile) ApplyVelocity(dt float64) (dx, dy int) {
+	// Calculate movement with sub-pixel accumulation
+	moveX := p.VX*dt + p.RemX
+	moveY := p.VY*dt + p.RemY
+
+	dx = int(moveX)
+	dy = int(moveY)
+
+	p.RemX = moveX - float64(dx)
+	p.RemY = moveY - float64(dy)
+
+	return dx, dy
 }
 
 // StickToWall makes the projectile stick to a wall
