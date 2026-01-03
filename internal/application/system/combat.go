@@ -15,20 +15,22 @@ type CombatSystem struct {
 	projectiles []*entity.Projectile
 	enemies     []*entity.Enemy
 	golds       []*entity.Gold
+	rng         *rand.Rand // Seeded RNG for deterministic randomness
 
 	// Event callbacks
-	OnHitstop    func(frames int)
+	OnHitstop     func(frames int)
 	OnScreenShake func(intensity float64)
 }
 
-// NewCombatSystem creates a new combat system
-func NewCombatSystem(cfg *config.GameConfig, stage *entity.Stage) *CombatSystem {
+// NewCombatSystem creates a new combat system with a seeded RNG
+func NewCombatSystem(cfg *config.GameConfig, stage *entity.Stage, rng *rand.Rand) *CombatSystem {
 	return &CombatSystem{
 		config:      cfg,
 		stage:       stage,
 		projectiles: make([]*entity.Projectile, 0, 32),
 		enemies:     make([]*entity.Enemy, 0, 32),
 		golds:       make([]*entity.Gold, 0, 64),
+		rng:         rng,
 	}
 }
 
@@ -582,7 +584,7 @@ func (s *CombatSystem) damagePlayer(player *entity.Player, damage int, fromX int
 func (s *CombatSystem) spawnGold(enemy *entity.Enemy) {
 	amount := enemy.GoldDropMin
 	if enemy.GoldDropMax > enemy.GoldDropMin {
-		amount += rand.Intn(enemy.GoldDropMax - enemy.GoldDropMin)
+		amount += s.rng.Intn(enemy.GoldDropMax - enemy.GoldDropMin)
 	}
 
 	pickupCfg := s.config.Entities.Pickups["gold"]

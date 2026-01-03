@@ -1,11 +1,14 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"image/color"
 	"io/fs"
 	"log"
 	"math"
+	"math/rand"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
@@ -60,10 +63,22 @@ type Game struct {
 
 	// Arrow selection UI
 	arrowSelectUI *entity.ArrowSelectUI
+
+	// Deterministic RNG
+	rng  *rand.Rand
+	seed int64
+
+	// Input recording
+	recorder       *Recorder
+	recordFilename string
 }
 
 // NewGame creates a new game instance
-func NewGame(cfg *config.GameConfig, stageCfg *config.StageConfig, stage *entity.Stage) *Game {
+func NewGame(cfg *config.GameConfig, stageCfg *config.StageConfig, stage *entity.Stage, recordFilename string) *Game {
+	// Initialize seeded RNG for deterministic randomness
+	seed := time.Now().UnixNano()
+	rng := rand.New(rand.NewSource(seed))
+
 	// Create player hitbox from config
 	playerCfg := cfg.Entities.Player
 	hitbox := entity.TrapezoidHitbox{
@@ -89,8 +104,8 @@ func NewGame(cfg *config.GameConfig, stageCfg *config.StageConfig, stage *entity
 
 	player := entity.NewPlayer(stage.SpawnX, stage.SpawnY, hitbox, playerCfg.Stats.MaxHealth)
 
-	// Create combat system
-	combatSystem := system.NewCombatSystem(cfg, stage)
+	// Create combat system with seeded RNG
+	combatSystem := system.NewCombatSystem(cfg, stage, rng)
 
 	// Create arrow select UI with config
 	arrowSelectCfg := entity.ArrowSelectConfig{
@@ -100,20 +115,29 @@ func NewGame(cfg *config.GameConfig, stageCfg *config.StageConfig, stage *entity
 	}
 
 	game := &Game{
-		config:        cfg,
-		stageCfg:      stageCfg,
-		stage:         stage,
-		state:         state.StatePlaying,
-		player:        player,
-		physicsSystem: system.NewPhysicsSystem(cfg.Physics, stage),
-		inputSystem:   system.NewInputSystem(cfg.Physics),
-		combatSystem:  combatSystem,
-		screenW:       cfg.Physics.Display.ScreenWidth,
-		screenH:       cfg.Physics.Display.ScreenHeight,
-		tileSize:      stage.TileSize,
-		dt:            1.0 / float64(cfg.Physics.Display.Framerate),
-		shakeDecay:    cfg.Physics.Feedback.ScreenShake.Decay,
-		arrowSelectUI: entity.NewArrowSelectUIWithConfig(arrowSelectCfg),
+		config:         cfg,
+		stageCfg:       stageCfg,
+		stage:          stage,
+		state:          state.StatePlaying,
+		player:         player,
+		physicsSystem:  system.NewPhysicsSystem(cfg.Physics, stage),
+		inputSystem:    system.NewInputSystem(cfg.Physics),
+		combatSystem:   combatSystem,
+		screenW:        cfg.Physics.Display.ScreenWidth,
+		screenH:        cfg.Physics.Display.ScreenHeight,
+		tileSize:       stage.TileSize,
+		dt:             1.0 / float64(cfg.Physics.Display.Framerate),
+		shakeDecay:     cfg.Physics.Feedback.ScreenShake.Decay,
+		arrowSelectUI:  entity.NewArrowSelectUIWithConfig(arrowSelectCfg),
+		rng:            rng,
+		seed:           seed,
+		recordFilename: recordFilename,
+	}
+
+	// Initialize recorder if recording is enabled
+	if recordFilename != "" {
+		game.recorder = NewRecorder(seed, stageCfg.Name)
+		log.Printf("Recording enabled: %s (seed: %d)", recordFilename, seed)
 	}
 
 	// Set up combat callbacks
@@ -164,8 +188,18 @@ func (g *Game) updatePlaying() {
 		return
 	}
 
+	// F5: Save recording manually
+	if inpututil.IsKeyJustPressed(ebiten.KeyF5) && g.recorder != nil {
+		g.saveRecording()
+	}
+
 	// Get input
 	input := g.inputSystem.GetInput()
+
+	// Record input if recording is enabled
+	if g.recorder != nil {
+		g.recorder.RecordFrame(input)
+	}
 
 	// Update arrow selection UI (always, for animation)
 	g.arrowSelectUI.Update(input.RightClickPressed, input.RightClickReleased, input.MouseX, input.MouseY, g.screenW, g.screenH)
@@ -241,6 +275,28 @@ func (g *Game) updatePlaying() {
 	// Check game over
 	if g.player.Health <= 0 {
 		g.state = state.StateGameOver
+		// Auto-save recording on game over
+		if g.recorder != nil {
+			g.saveRecording()
+		}
+	}
+}
+
+// saveRecording saves the current recording to file
+func (g *Game) saveRecording() {
+	if g.recorder == nil {
+		return
+	}
+
+	filename := g.recordFilename
+	if filename == "" {
+		filename = GenerateFilename()
+	}
+
+	if err := g.recorder.Save(filename); err != nil {
+		log.Printf("Failed to save recording: %v", err)
+	} else {
+		log.Printf("Recording saved: %s (%d frames)", filename, g.recorder.FrameCount())
 	}
 }
 
@@ -268,6 +324,10 @@ func (g *Game) checkSpikeDamage() {
 }
 
 func (g *Game) restart() {
+	// Reset RNG with new seed
+	g.seed = time.Now().UnixNano()
+	g.rng = rand.New(rand.NewSource(g.seed))
+
 	g.player.SetPixelPos(g.stage.SpawnX, g.stage.SpawnY)
 	g.player.VX = 0
 	g.player.VY = 0
@@ -284,8 +344,8 @@ func (g *Game) restart() {
 		MaxFrame:    g.config.Physics.ArrowSelect.MaxFrame,
 	})
 
-	// Respawn enemies
-	g.combatSystem = system.NewCombatSystem(g.config, g.stage)
+	// Respawn enemies with new RNG
+	g.combatSystem = system.NewCombatSystem(g.config, g.stage, g.rng)
 	g.combatSystem.OnHitstop = func(frames int) {
 		g.hitstopFrames = frames
 	}
@@ -295,6 +355,12 @@ func (g *Game) restart() {
 	}
 	for i, spawn := range g.stageCfg.Enemies {
 		g.combatSystem.SpawnEnemy(entity.EntityID(i+1), spawn.X, spawn.Y, spawn.Type, spawn.FacingRight)
+	}
+
+	// Reset recorder if recording
+	if g.recordFilename != "" {
+		g.recorder = NewRecorder(g.seed, g.stageCfg.Name)
+		log.Printf("Recording restarted (seed: %d)", g.seed)
 	}
 }
 
@@ -703,6 +769,12 @@ func randFloat() float64 {
 }
 
 func main() {
+	// Parse command line flags
+	recordFlag := flag.String("record", "", "Record input to file (e.g., -record replay.json)")
+	flag.Parse()
+
+	recordFilename := *recordFlag
+
 	// Load configurations using embedded filesystem
 	fsys, err := fs.Sub(configFS, "configs")
 	if err != nil {
@@ -722,7 +794,7 @@ func main() {
 	stage := system.LoadStage(stageCfg)
 
 	// Create game
-	game := NewGame(cfg, stageCfg, stage)
+	game := NewGame(cfg, stageCfg, stage, recordFilename)
 
 	// Set up ebiten
 	ebiten.SetWindowSize(cfg.Physics.Display.ScreenWidth*cfg.Physics.Display.Scale,

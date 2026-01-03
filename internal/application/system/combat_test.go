@@ -1,6 +1,7 @@
 package system
 
 import (
+	"math/rand"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,6 +10,11 @@ import (
 	"github.com/younwookim/mg/internal/domain/entity"
 	"github.com/younwookim/mg/internal/infrastructure/config"
 )
+
+// testRNG returns a seeded RNG for deterministic tests
+func testRNG() *rand.Rand {
+	return rand.New(rand.NewSource(12345))
+}
 
 func createTestGameConfig() *config.GameConfig {
 	return &config.GameConfig{
@@ -79,7 +85,7 @@ func TestNewCombatSystem(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
 
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	require.NotNil(t, sys)
 	assert.NotNil(t, sys.projectiles)
@@ -90,7 +96,7 @@ func TestNewCombatSystem(t *testing.T) {
 func TestCombatSystem_SpawnPlayerArrow(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	sys.SpawnPlayerArrow(100, 200, true)
 
@@ -104,7 +110,7 @@ func TestCombatSystem_SpawnPlayerArrow(t *testing.T) {
 func TestCombatSystem_MoveEnemyX(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	t.Run("moves right with sub-pixel accumulation", func(t *testing.T) {
 		enemy := entity.NewEnemy(1, 32, 32, "slime")
@@ -143,7 +149,7 @@ func TestCombatSystem_MoveEnemyX(t *testing.T) {
 func TestCombatSystem_MoveEnemyY(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	t.Run("moves down with sub-pixel accumulation", func(t *testing.T) {
 		enemy := entity.NewEnemy(1, 32, 32, "slime")
@@ -175,7 +181,7 @@ func TestCombatSystem_MoveEnemyY(t *testing.T) {
 func TestCombatSystem_ApplyEnemyGravity(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	enemy := entity.NewEnemy(1, 32, 32, "slime")
 	enemy.HitboxWidth = 12
@@ -255,7 +261,7 @@ func TestCombatSystem_SpawnEnemy(t *testing.T) {
 		},
 	}
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	sys.SpawnEnemy(1, 100, 200, "slime", true)
 
@@ -271,7 +277,7 @@ func TestCombatSystem_SpawnEnemy(t *testing.T) {
 func TestCombatSystem_GetProjectiles(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	sys.SpawnPlayerArrow(100, 200, true)
 
@@ -282,7 +288,7 @@ func TestCombatSystem_GetProjectiles(t *testing.T) {
 func TestCombatSystem_GetEnemies(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	enemies := sys.GetEnemies()
 	assert.Empty(t, enemies)
@@ -291,7 +297,7 @@ func TestCombatSystem_GetEnemies(t *testing.T) {
 func TestCombatSystem_GetGolds(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	golds := sys.GetGolds()
 	assert.Empty(t, golds)
@@ -300,7 +306,7 @@ func TestCombatSystem_GetGolds(t *testing.T) {
 func TestCombatSystem_UpdateProjectiles(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	t.Run("moves projectiles", func(t *testing.T) {
 		sys.SpawnPlayerArrow(32, 32, true)
@@ -343,7 +349,7 @@ func TestCombatSystem_UpdateProjectiles(t *testing.T) {
 func TestCombatSystem_SpawnGold(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	t.Run("spawns gold from enemy", func(t *testing.T) {
 		enemy := entity.NewEnemy(1, 32, 32, "slime")
@@ -365,7 +371,7 @@ func TestCombatSystem_SpawnGold(t *testing.T) {
 func TestCombatSystem_DamagePlayer(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	t.Run("applies damage and iframes", func(t *testing.T) {
 		hitbox := entity.TrapezoidHitbox{
@@ -414,7 +420,7 @@ func TestCombatSystem_DamagePlayer(t *testing.T) {
 func TestCombatSystem_UpdatePatrolAI(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	t.Run("enemy moves in patrol direction", func(t *testing.T) {
 		enemy := entity.NewEnemy(1, 32, 32, "slime")
@@ -438,7 +444,7 @@ func TestCombatSystem_UpdatePatrolAI(t *testing.T) {
 func TestCombatSystem_UpdateChaseAI(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	t.Run("applies gravity to non-flying enemy", func(t *testing.T) {
 		enemy := entity.NewEnemy(1, 32, 32, "chaser")
@@ -479,7 +485,7 @@ func TestCombatSystem_UpdateChaseAI(t *testing.T) {
 func TestCombatSystem_UpdateGolds(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	t.Run("gold falls with gravity", func(t *testing.T) {
 		gold := entity.NewGold(32, 24, 10, 400, 0.5, 0.3, 8, 8, 16)
@@ -559,7 +565,7 @@ func TestCombatSystem_UpdateEnemies(t *testing.T) {
 		},
 	}
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	t.Run("updates active enemies", func(t *testing.T) {
 		enemy := entity.NewEnemy(1, 32, 32, "slime")
@@ -601,7 +607,7 @@ func TestCombatSystem_UpdateEnemies(t *testing.T) {
 func TestCombatSystem_CheckCollisions(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	t.Run("arrow hits enemy", func(t *testing.T) {
 		sys.projectiles = nil
@@ -679,7 +685,7 @@ func TestCombatSystem_CheckCollisions(t *testing.T) {
 func TestCombatSystem_UpdateRangedAI(t *testing.T) {
 	cfg := createTestGameConfig()
 	stage := createTestStage()
-	sys := NewCombatSystem(cfg, stage)
+	sys := NewCombatSystem(cfg, stage, testRNG())
 
 	t.Run("faces player direction", func(t *testing.T) {
 		enemy := entity.NewEnemy(1, 24, 32, "archer")

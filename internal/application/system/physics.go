@@ -110,6 +110,12 @@ func (s *PhysicsSystem) applyMovement(player *entity.Player, dx, dy int) {
 	// Move Y axis (1 pixel substeps)
 	s.moveY(player, dy)
 
+	// If no vertical movement, check if we're standing on ground
+	// This prevents OnGround from becoming false when player is idle
+	if dy == 0 {
+		s.checkGroundContact(player)
+	}
+
 	// Final overlap resolution after movement
 	s.resolveOverlap(player)
 }
@@ -133,6 +139,15 @@ func (s *PhysicsSystem) moveX(player *entity.Player, dx int) {
 			return
 		}
 		player.X += step
+	}
+}
+
+// checkGroundContact checks if the player's feet are touching ground
+// Called when there's no vertical movement to maintain OnGround state
+func (s *PhysicsSystem) checkGroundContact(player *entity.Player) {
+	// Check if moving down by 1 unit would cause collision (feet touching ground)
+	if s.checkCollisionY(player, entity.PositionScale) {
+		player.OnGround = true
 	}
 }
 
