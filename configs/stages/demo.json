@@ -77,7 +77,8 @@
     {"type": "slime", "x": 400, "y": 176, "facingRight": false},
     {"type": "archer", "x": 520, "y": 160, "facingRight": false},
     {"type": "bat", "x": 280, "y": 100, "facingRight": true},
-    {"type": "slime", "x": 100, "y": 368, "facingRight": true}
+    {"type": "slime", "x": 100, "y": 368, "facingRight": true},
+    {"type": "berserker", "x": 450, "y": 304, "facingRight": false}
   ],
   "pickups": [
     {"type": "health", "x": 560, "y": 368}

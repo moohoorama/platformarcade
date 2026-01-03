@@ -123,14 +123,14 @@
       "stats": {
         "maxHealth": 30,
         "contactDamage": 5,
+        "moveSpeed": 30,
         "goldDrop": {"min": 10, "max": 25}
       },
       "ai": {
-        "type": "ranged",
+        "type": "patrol",
         "detectRange": 120,
-        "attackRange": 100,
-        "attackCooldown": 2.0,
-        "projectile": "enemyArrow"
+        "patrolDistance": 50,
+        "pauseDuration": 1.0
       }
     },
     "bat": {
@@ -156,10 +156,41 @@
         "goldDrop": {"min": 3, "max": 8}
       },
       "ai": {
-        "type": "chase",
+        "type": "patrol",
         "detectRange": 100,
-        "chaseSpeed": 80,
+        "patrolDistance": 40,
+        "pauseDuration": 0.5,
         "flying": true
+      }
+    },
+    "berserker": {
+      "id": "berserker",
+      "sprite": {
+        "sheet": "enemies.png",
+        "frameWidth": 16,
+        "frameHeight": 24,
+        "animations": {
+          "idle": {"row": 11, "frames": 4, "fps": 6},
+          "run": {"row": 12, "frames": 6, "fps": 12},
+          "hit": {"row": 13, "frames": 2, "fps": 10},
+          "death": {"row": 14, "frames": 4, "fps": 12}
+        }
+      },
+      "hitbox": {
+        "body": {"offsetX": 2, "offsetY": 4, "width": 12, "height": 20}
+      },
+      "hurtbox": {"offsetX": 3, "offsetY": 4, "width": 10, "height": 18},
+      "stats": {
+        "maxHealth": 40,
+        "contactDamage": 20,
+        "moveSpeed": 80,
+        "goldDrop": {"min": 15, "max": 30}
+      },
+      "ai": {
+        "type": "aggressive",
+        "attackRange": 150,
+        "attackCooldown": 1.5,
+        "jumpForce": 250
       }
     }
   },

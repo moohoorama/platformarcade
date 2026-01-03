@@ -101,6 +101,7 @@ type AIConfig struct {
 	Projectile     string  `json:"projectile,omitempty"`
 	ChaseSpeed     float64 `json:"chaseSpeed,omitempty"`
 	Flying         bool    `json:"flying,omitempty"`
+	JumpForce      float64 `json:"jumpForce,omitempty"` // For aggressive AI
 }
 
 type PickupConfig struct {

@@ -109,6 +109,8 @@ func (s *CombatSystem) SpawnEnemy(id entity.EntityID, x, y int, enemyType string
 		enemy.AIType = entity.AIRanged
 	case "chase":
 		enemy.AIType = entity.AIChase
+	case "aggressive":
+		enemy.AIType = entity.AIAggressive
 	}
 
 	enemy.DetectRange = enemyCfg.AI.DetectRange
@@ -116,6 +118,7 @@ func (s *CombatSystem) SpawnEnemy(id entity.EntityID, x, y int, enemyType string
 	enemy.AttackRange = enemyCfg.AI.AttackRange
 	enemy.AttackCooldown = enemyCfg.AI.AttackCooldown
 	enemy.Flying = enemyCfg.AI.Flying
+	enemy.JumpForce = enemyCfg.AI.JumpForce
 
 	s.enemies = append(s.enemies, enemy)
 }
@@ -219,9 +222,9 @@ func (s *CombatSystem) updateEnemies(player *entity.Player, dt float64) {
 			enemy.AttackTimer -= dt
 		}
 
-		// Calculate distance to player
-		dx := float64(player.X - enemy.X)
-		dy := float64(player.Y - enemy.Y)
+		// Calculate distance to player (use PixelX/Y since enemies are in pixels)
+		dx := float64(player.PixelX() - enemy.X)
+		dy := float64(player.PixelY() - enemy.Y)
 		dist := math.Sqrt(dx*dx + dy*dy)
 
 		switch enemy.AIType {
@@ -231,6 +234,8 @@ func (s *CombatSystem) updateEnemies(player *entity.Player, dt float64) {
 			s.updateRangedAI(enemy, player, dist, dx, dt)
 		case entity.AIChase:
 			s.updateChaseAI(enemy, player, dist, dx, dy, dt)
+		case entity.AIAggressive:
+			s.updateAggressiveAI(enemy, player, dist, dx, dy, dt)
 		}
 	}
 }
@@ -240,10 +245,14 @@ func (s *CombatSystem) updatePatrolAI(enemy *entity.Enemy, player *entity.Player
 	moveX := float64(enemy.PatrolDir) * enemy.MoveSpeed * dt
 	s.moveEnemyX(enemy, moveX)
 
-	// Turn around at patrol bounds
-	if math.Abs(float64(enemy.X-enemy.PatrolStartX)) > enemy.PatrolDistance {
-		enemy.PatrolDir *= -1
-		enemy.FacingRight = enemy.PatrolDir > 0
+	// Turn around at patrol bounds (check direction to prevent oscillation)
+	patrolDist := int(enemy.PatrolDistance)
+	if enemy.PatrolDir > 0 && enemy.X >= enemy.PatrolStartX+patrolDist {
+		enemy.PatrolDir = -1
+		enemy.FacingRight = false
+	} else if enemy.PatrolDir < 0 && enemy.X <= enemy.PatrolStartX-patrolDist {
+		enemy.PatrolDir = 1
+		enemy.FacingRight = true
 	}
 
 	// Apply gravity if not flying
@@ -308,6 +317,49 @@ func (s *CombatSystem) updateChaseAI(enemy *entity.Enemy, player *entity.Player,
 		} else if dy < 0 {
 			s.moveEnemyY(enemy, -speed)
 		}
+	}
+}
+
+func (s *CombatSystem) updateAggressiveAI(enemy *entity.Enemy, player *entity.Player, dist, dx, dy float64, dt float64) {
+	// Always apply gravity
+	s.applyEnemyGravity(enemy, dt)
+
+	// Face player
+	enemy.FacingRight = dx > 0
+
+	// Always charge toward player (no detect range check - aggressive!)
+	speed := enemy.MoveSpeed * dt
+
+	if dx > 0 {
+		s.moveEnemyX(enemy, speed)
+	} else if dx < 0 {
+		s.moveEnemyX(enemy, -speed)
+	}
+
+	// Jump if player is above and enemy is on ground
+	// dy < 0 means player is above (player.Y < enemy.Y in screen coords)
+	playerAbove := dy < -20 // Player is at least 20 pixels above
+	if playerAbove && enemy.OnGround && enemy.JumpForce > 0 {
+		enemy.VY = -enemy.JumpForce
+		enemy.OnGround = false
+	}
+
+	// Shoot while charging - if in range and cooldown ready
+	if dist < enemy.AttackRange && enemy.AttackTimer <= 0 {
+		arrowCfg := s.config.Entities.Projectiles["enemyArrow"]
+		arrow := entity.NewArrow(
+			float64(enemy.X+8), float64(enemy.Y+8),
+			enemy.FacingRight,
+			arrowCfg.Physics.Speed,
+			arrowCfg.Physics.LaunchAngleDeg,
+			arrowCfg.Physics.GravityAccel,
+			arrowCfg.Physics.MaxFallSpeed,
+			arrowCfg.Physics.MaxRange,
+			arrowCfg.Damage,
+			false, // isPlayer
+		)
+		s.projectiles = append(s.projectiles, arrow)
+		enemy.AttackTimer = enemy.AttackCooldown
 	}
 }
 
@@ -380,11 +432,16 @@ func (s *CombatSystem) moveEnemyY(enemy *entity.Enemy, moveY float64) {
 		}
 
 		if s.stage.IsSolidAt(ex, checkY) || s.stage.IsSolidAt(ex+ew-1, checkY) || s.stage.IsSolidAt(ex+ew/2, checkY) {
+			if step > 0 {
+				// Hit ground
+				enemy.OnGround = true
+			}
 			enemy.VY = 0
 			enemy.RemY = 0 // Reset remainder on collision
 			return
 		}
 		enemy.Y = newY
+		enemy.OnGround = false // In air while moving
 	}
 }
 

@@ -7,6 +7,7 @@ const (
 	AIPatrol AIType = iota
 	AIRanged
 	AIChase
+	AIAggressive // Charges at player, shoots while running, jumps if player is above
 )
 
 // Enemy represents an enemy entity
@@ -40,12 +41,14 @@ type Enemy struct {
 	AttackRange    float64
 	AttackCooldown float64
 	Flying         bool
+	JumpForce      float64 // Jump velocity for aggressive AI
 
 	// State
 	PatrolStartX int
 	PatrolDir    int
 	AttackTimer  float64
 	HitTimer     float64
+	OnGround     bool // For jump detection
 
 	// Gold drop
 	GoldDropMin int

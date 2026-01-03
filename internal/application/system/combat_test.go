@@ -1,6 +1,7 @@
 package system
 
 import (
+	"math"
 	"math/rand"
 	"testing"
 
@@ -439,6 +440,101 @@ func TestCombatSystem_UpdatePatrolAI(t *testing.T) {
 		// Should accumulate movement in RemX or move
 		assert.True(t, enemy.RemX > 0 || enemy.X > 32)
 	})
+
+	t.Run("turns left when reaching right patrol bound", func(t *testing.T) {
+		enemy := entity.NewEnemy(1, 32, 32, "slime")
+		enemy.HitboxWidth = 12
+		enemy.HitboxHeight = 12
+		enemy.PatrolDir = 1 // Moving right
+		enemy.MoveSpeed = 50
+		enemy.PatrolDistance = 20
+		enemy.PatrolStartX = 32
+		enemy.X = 52 // At right bound (32 + 20)
+		enemy.Flying = true // Skip gravity
+
+		hitbox := entity.TrapezoidHitbox{}
+		player := entity.NewPlayer(100, 32, hitbox, 100)
+
+		sys.updatePatrolAI(enemy, player, 100, 0.1)
+
+		assert.Equal(t, -1, enemy.PatrolDir, "Should turn left at right bound")
+		assert.False(t, enemy.FacingRight)
+	})
+
+	t.Run("turns right when reaching left patrol bound", func(t *testing.T) {
+		enemy := entity.NewEnemy(1, 32, 32, "slime")
+		enemy.HitboxWidth = 12
+		enemy.HitboxHeight = 12
+		enemy.PatrolDir = -1 // Moving left
+		enemy.MoveSpeed = 50
+		enemy.PatrolDistance = 20
+		enemy.PatrolStartX = 32
+		enemy.X = 12 // At left bound (32 - 20)
+		enemy.Flying = true // Skip gravity
+
+		hitbox := entity.TrapezoidHitbox{}
+		player := entity.NewPlayer(100, 32, hitbox, 100)
+
+		sys.updatePatrolAI(enemy, player, 100, 0.1)
+
+		assert.Equal(t, 1, enemy.PatrolDir, "Should turn right at left bound")
+		assert.True(t, enemy.FacingRight)
+	})
+
+	t.Run("does not oscillate at boundary", func(t *testing.T) {
+		enemy := entity.NewEnemy(1, 32, 32, "slime")
+		enemy.HitboxWidth = 12
+		enemy.HitboxHeight = 12
+		enemy.PatrolDir = 1
+		enemy.MoveSpeed = 50
+		enemy.PatrolDistance = 20
+		enemy.PatrolStartX = 32
+		enemy.X = 52 // At right bound
+		enemy.Flying = true
+
+		hitbox := entity.TrapezoidHitbox{}
+		player := entity.NewPlayer(100, 32, hitbox, 100)
+
+		// First update: should turn left
+		sys.updatePatrolAI(enemy, player, 100, 0.1)
+		assert.Equal(t, -1, enemy.PatrolDir)
+
+		// Second update: should NOT turn right again (no oscillation)
+		sys.updatePatrolAI(enemy, player, 100, 0.1)
+		assert.Equal(t, -1, enemy.PatrolDir, "Should not oscillate - stay moving left")
+
+		// Third update: still moving left
+		sys.updatePatrolAI(enemy, player, 100, 0.1)
+		assert.Equal(t, -1, enemy.PatrolDir, "Should continue moving left")
+	})
+
+	t.Run("completes full patrol cycle", func(t *testing.T) {
+		enemy := entity.NewEnemy(1, 32, 32, "slime")
+		enemy.HitboxWidth = 12
+		enemy.HitboxHeight = 12
+		enemy.PatrolDir = 1
+		enemy.MoveSpeed = 100 // Fast for quick test
+		enemy.PatrolDistance = 10
+		enemy.PatrolStartX = 32
+		enemy.Flying = true
+
+		hitbox := entity.TrapezoidHitbox{}
+		player := entity.NewPlayer(100, 32, hitbox, 100)
+
+		// Simulate multiple frames
+		turnCount := 0
+		lastDir := enemy.PatrolDir
+		for i := 0; i < 100; i++ {
+			sys.updatePatrolAI(enemy, player, 100, 0.05)
+			if enemy.PatrolDir != lastDir {
+				turnCount++
+				lastDir = enemy.PatrolDir
+			}
+		}
+
+		// Should have turned multiple times (at least 2 for a full cycle)
+		assert.GreaterOrEqual(t, turnCount, 2, "Should complete at least one full patrol cycle")
+	})
 }
 
 func TestCombatSystem_UpdateChaseAI(t *testing.T) {
@@ -719,5 +815,223 @@ func TestCombatSystem_UpdateRangedAI(t *testing.T) {
 		sys.updateRangedAI(enemy, player, 16, 16, 0.1)
 
 		assert.Greater(t, enemy.VY, 0.0)
+	})
+}
+
+func TestCombatSystem_UpdateAggressiveAI(t *testing.T) {
+	cfg := createTestGameConfig()
+	stage := createTestStage()
+	sys := NewCombatSystem(cfg, stage, testRNG())
+
+	t.Run("charges toward player on right", func(t *testing.T) {
+		enemy := entity.NewEnemy(1, 32, 32, "berserker")
+		enemy.HitboxWidth = 12
+		enemy.HitboxHeight = 12
+		enemy.MoveSpeed = 80
+		enemy.OnGround = true
+		enemy.FacingRight = false
+
+		hitbox := entity.TrapezoidHitbox{}
+		player := entity.NewPlayer(50, 32, hitbox, 100) // Player to the right (pixel position)
+
+		// Use PixelX/PixelY since enemies are in pixels
+		dx := float64(player.PixelX() - enemy.X) // positive
+		dy := float64(player.PixelY() - enemy.Y)
+		dist := math.Sqrt(dx*dx + dy*dy)
+
+		initialX := enemy.X
+		sys.updateAggressiveAI(enemy, player, dist, dx, dy, 0.1)
+
+		// Should move right toward player
+		assert.True(t, enemy.X > initialX || enemy.RemX > 0)
+		assert.True(t, enemy.FacingRight)
+	})
+
+	t.Run("charges toward player on left", func(t *testing.T) {
+		enemy := entity.NewEnemy(1, 48, 32, "berserker") // Valid position within stage
+		enemy.HitboxWidth = 12
+		enemy.HitboxHeight = 12
+		enemy.MoveSpeed = 80
+		enemy.OnGround = true
+		enemy.FacingRight = true
+
+		hitbox := entity.TrapezoidHitbox{}
+		player := entity.NewPlayer(24, 32, hitbox, 100) // Player to the left (pixel position)
+
+		// Use PixelX/PixelY since enemies are in pixels
+		dx := float64(player.PixelX() - enemy.X) // negative
+		dy := float64(player.PixelY() - enemy.Y)
+		dist := math.Sqrt(dx*dx + dy*dy)
+
+		initialX := enemy.X
+		sys.updateAggressiveAI(enemy, player, dist, dx, dy, 0.1)
+
+		// Should move left toward player
+		assert.True(t, enemy.X < initialX || enemy.RemX < 0)
+		assert.False(t, enemy.FacingRight)
+	})
+
+	t.Run("jumps when player is above and on ground", func(t *testing.T) {
+		enemy := entity.NewEnemy(1, 32, 48, "berserker") // Valid position within stage
+		enemy.HitboxWidth = 12
+		enemy.HitboxHeight = 12
+		enemy.MoveSpeed = 80
+		enemy.JumpForce = 250
+		enemy.OnGround = true
+		enemy.VY = 0
+
+		hitbox := entity.TrapezoidHitbox{}
+		player := entity.NewPlayer(32, 20, hitbox, 100) // Player above (lower Y, >20px difference)
+
+		// Use PixelX/PixelY since enemies are in pixels
+		dx := float64(player.PixelX() - enemy.X)
+		dy := float64(player.PixelY() - enemy.Y) // negative (player above)
+		dist := math.Sqrt(dx*dx + dy*dy)
+
+		sys.updateAggressiveAI(enemy, player, dist, dx, dy, 0.016)
+
+		assert.Less(t, enemy.VY, 0.0, "Should have negative VY (jumping)")
+		assert.False(t, enemy.OnGround, "Should no longer be on ground after jump")
+	})
+
+	t.Run("does not jump when not on ground", func(t *testing.T) {
+		enemy := entity.NewEnemy(1, 32, 32, "berserker") // Valid position within stage
+		enemy.HitboxWidth = 12
+		enemy.HitboxHeight = 12
+		enemy.MoveSpeed = 80
+		enemy.JumpForce = 250
+		enemy.OnGround = false // In air
+		enemy.VY = 50          // Falling
+
+		hitbox := entity.TrapezoidHitbox{}
+		player := entity.NewPlayer(32, 20, hitbox, 100) // Player above
+
+		// Use PixelX/PixelY since enemies are in pixels
+		dx := float64(player.PixelX() - enemy.X)
+		dy := float64(player.PixelY() - enemy.Y)
+		dist := math.Sqrt(dx*dx + dy*dy)
+
+		sys.updateAggressiveAI(enemy, player, dist, dx, dy, 0.016)
+
+		// VY should not become negative (no jump since not on ground)
+		// Note: gravity may push down further or collision may stop it
+		assert.GreaterOrEqual(t, enemy.VY, 0.0, "Should not jump while in air")
+	})
+
+	t.Run("does not jump when player is at same level", func(t *testing.T) {
+		enemy := entity.NewEnemy(1, 32, 32, "berserker")
+		enemy.HitboxWidth = 12
+		enemy.HitboxHeight = 12
+		enemy.MoveSpeed = 80
+		enemy.JumpForce = 250
+		enemy.OnGround = true
+		enemy.VY = 0
+
+		hitbox := entity.TrapezoidHitbox{}
+		player := entity.NewPlayer(50, 32, hitbox, 100) // Same Y level (pixel position)
+
+		// Use PixelX/PixelY since enemies are in pixels
+		dx := float64(player.PixelX() - enemy.X)
+		dy := float64(player.PixelY() - enemy.Y) // 0
+		dist := math.Sqrt(dx*dx + dy*dy)
+
+		sys.updateAggressiveAI(enemy, player, dist, dx, dy, 0.016)
+
+		// VY should be >= 0 (gravity applied, no jump)
+		assert.GreaterOrEqual(t, enemy.VY, 0.0, "Should not jump when player at same level")
+	})
+
+	t.Run("shoots when in attack range", func(t *testing.T) {
+		enemy := entity.NewEnemy(1, 32, 32, "berserker")
+		enemy.HitboxWidth = 12
+		enemy.HitboxHeight = 12
+		enemy.MoveSpeed = 80
+		enemy.AttackRange = 100
+		enemy.AttackCooldown = 1.0
+		enemy.AttackTimer = 0 // Ready to shoot
+		enemy.OnGround = true
+
+		hitbox := entity.TrapezoidHitbox{}
+		player := entity.NewPlayer(60, 32, hitbox, 100) // Within range (28 pixels away)
+
+		// Use PixelX/PixelY since enemies are in pixels
+		dx := float64(player.PixelX() - enemy.X)
+		dy := float64(player.PixelY() - enemy.Y)
+		dist := math.Sqrt(dx*dx + dy*dy)
+
+		initialProjectiles := len(sys.projectiles)
+		sys.updateAggressiveAI(enemy, player, dist, dx, dy, 0.016)
+
+		assert.Greater(t, len(sys.projectiles), initialProjectiles, "Should spawn projectile")
+		assert.Equal(t, 1.0, enemy.AttackTimer, "Attack timer should be reset to cooldown")
+	})
+
+	t.Run("does not shoot when on cooldown", func(t *testing.T) {
+		sys.projectiles = nil // Clear projectiles
+		enemy := entity.NewEnemy(1, 32, 32, "berserker")
+		enemy.HitboxWidth = 12
+		enemy.HitboxHeight = 12
+		enemy.MoveSpeed = 80
+		enemy.AttackRange = 100
+		enemy.AttackCooldown = 1.0
+		enemy.AttackTimer = 0.5 // On cooldown
+		enemy.OnGround = true
+
+		hitbox := entity.TrapezoidHitbox{}
+		player := entity.NewPlayer(60, 32, hitbox, 100)
+
+		// Use PixelX/PixelY since enemies are in pixels
+		dx := float64(player.PixelX() - enemy.X)
+		dy := float64(player.PixelY() - enemy.Y)
+		dist := math.Sqrt(dx*dx + dy*dy)
+
+		sys.updateAggressiveAI(enemy, player, dist, dx, dy, 0.016)
+
+		assert.Empty(t, sys.projectiles, "Should not spawn projectile when on cooldown")
+	})
+
+	t.Run("does not shoot when out of range", func(t *testing.T) {
+		sys.projectiles = nil
+		enemy := entity.NewEnemy(1, 32, 32, "berserker")
+		enemy.HitboxWidth = 12
+		enemy.HitboxHeight = 12
+		enemy.MoveSpeed = 80
+		enemy.AttackRange = 20
+		enemy.AttackCooldown = 1.0
+		enemy.AttackTimer = 0
+		enemy.OnGround = true
+
+		hitbox := entity.TrapezoidHitbox{}
+		player := entity.NewPlayer(60, 32, hitbox, 100) // Far away (28 pixels > 20 range)
+
+		// Use PixelX/PixelY since enemies are in pixels
+		dx := float64(player.PixelX() - enemy.X)
+		dy := float64(player.PixelY() - enemy.Y)
+		dist := math.Sqrt(dx*dx + dy*dy)
+
+		sys.updateAggressiveAI(enemy, player, dist, dx, dy, 0.016)
+
+		assert.Empty(t, sys.projectiles, "Should not spawn projectile when out of range")
+	})
+
+	t.Run("applies gravity", func(t *testing.T) {
+		enemy := entity.NewEnemy(1, 32, 32, "berserker")
+		enemy.HitboxWidth = 12
+		enemy.HitboxHeight = 12
+		enemy.MoveSpeed = 80
+		enemy.OnGround = false
+		enemy.VY = 0
+
+		hitbox := entity.TrapezoidHitbox{}
+		player := entity.NewPlayer(50, 32, hitbox, 100)
+
+		// Use PixelX/PixelY since enemies are in pixels
+		dx := float64(player.PixelX() - enemy.X)
+		dy := float64(player.PixelY() - enemy.Y)
+		dist := math.Sqrt(dx*dx + dy*dy)
+
+		sys.updateAggressiveAI(enemy, player, dist, dx, dy, 0.1)
+
+		assert.Greater(t, enemy.VY, 0.0, "Gravity should be applied")
 	})
 }
