@@ -1,12 +1,15 @@
 package entity
 
+// PositionScale is the internal position scale factor.
+// 1 pixel = 100 internal units. This provides 0.01 pixel precision.
+const PositionScale = 100
+
 // Body represents the physical body of an entity
-// Position is stored as integers for deterministic physics
-// Velocity is stored as float for smooth movement, with remainder accumulation
+// Position is stored at 100x scale for sub-pixel precision without floats.
+// Velocity is stored as float in 100x scale units per second.
 type Body struct {
-	X, Y       int     // Pixel position (integer)
-	VX, VY     float64 // Velocity (pixels per second)
-	RemX, RemY float64 // Subpixel remainder for smooth movement
+	X, Y   int     // 100x scaled position (divide by PositionScale for pixels)
+	VX, VY float64 // 100x scaled velocity (units per second)
 
 	OnGround     bool
 	OnCeiling    bool
@@ -14,6 +17,22 @@ type Body struct {
 	OnWallRight  bool
 	FacingRight  bool
 	WasOnGround  bool // For coyote time
+}
+
+// PixelX returns the pixel X position (internal X / PositionScale)
+func (b *Body) PixelX() int {
+	return b.X / PositionScale
+}
+
+// PixelY returns the pixel Y position (internal Y / PositionScale)
+func (b *Body) PixelY() int {
+	return b.Y / PositionScale
+}
+
+// SetPixelPos sets the position from pixel coordinates (converts to 100x scale)
+func (b *Body) SetPixelPos(x, y int) {
+	b.X = x * PositionScale
+	b.Y = y * PositionScale
 }
 
 // TrapezoidHitbox represents a hitbox approximated by three rects
@@ -42,18 +61,11 @@ func (hr HitboxRect) GetWorldRect(bodyX, bodyY int, facingRight bool, spriteWidt
 	return bodyX + offsetX, bodyY + hr.OffsetY, hr.Width, hr.Height
 }
 
-// ApplyVelocity applies velocity to position, returning integer pixels to move
-// Remainder is accumulated for next frame
+// ApplyVelocity applies velocity to position, returning integer units to move.
+// With 100x scale, no remainder accumulation is needed as precision is built-in.
 func (b *Body) ApplyVelocity(dt float64) (dx, dy int) {
-	moveX := b.VX*dt + b.RemX
-	moveY := b.VY*dt + b.RemY
-
-	dx = int(moveX)
-	dy = int(moveY)
-
-	b.RemX = moveX - float64(dx)
-	b.RemY = moveY - float64(dy)
-
+	dx = int(b.VX * dt)
+	dy = int(b.VY * dt)
 	return dx, dy
 }
 
@@ -84,12 +96,13 @@ type Player struct {
 	CurrentArrow   ArrowType    // 현재 사용 중인 화살
 }
 
-// NewPlayer creates a new player with default values
+// NewPlayer creates a new player with default values.
+// x, y are pixel coordinates which are internally stored at 100x scale.
 func NewPlayer(x, y int, hitbox TrapezoidHitbox, maxHealth int) *Player {
 	return &Player{
 		Body: Body{
-			X:           x,
-			Y:           y,
+			X:           x * PositionScale,
+			Y:           y * PositionScale,
 			FacingRight: true,
 		},
 		Hitbox:    hitbox,

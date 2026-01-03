@@ -461,9 +461,9 @@ func (s *CombatSystem) updateGolds(player *entity.Player, dt float64) {
 
 		// Collect if player touches
 		if gold.CanCollect() {
-			// Player center (using body hitbox)
-			px := float64(player.X + player.Hitbox.Body.OffsetX + player.Hitbox.Body.Width/2)
-			py := float64(player.Y + player.Hitbox.Body.OffsetY + player.Hitbox.Body.Height/2)
+			// Player center (using body hitbox) - use PixelX/PixelY since gold is in pixels
+			px := float64(player.PixelX() + player.Hitbox.Body.OffsetX + player.Hitbox.Body.Width/2)
+			py := float64(player.PixelY() + player.Hitbox.Body.OffsetY + player.Hitbox.Body.Height/2)
 			// Gold center
 			gx := gold.X + float64(hbW)/2
 			gy := gold.Y + float64(hbH)/2
@@ -522,8 +522,9 @@ func (s *CombatSystem) checkCollisions(player *entity.Player) {
 			}
 
 			ax, ay, aw, ah := proj.GetHitbox()
-			px := player.X + player.Hitbox.Body.OffsetX
-			py := player.Y + player.Hitbox.Body.OffsetY
+			// Use PixelX/PixelY since projectiles are in pixels
+			px := player.PixelX() + player.Hitbox.Body.OffsetX
+			py := player.PixelY() + player.Hitbox.Body.OffsetY
 			pw := player.Hitbox.Body.Width
 			ph := player.Hitbox.Body.Height
 
@@ -542,8 +543,9 @@ func (s *CombatSystem) checkCollisions(player *entity.Player) {
 			}
 
 			ex, ey, ew, eh := enemy.GetHitbox()
-			px := player.X + player.Hitbox.Body.OffsetX
-			py := player.Y + player.Hitbox.Body.OffsetY
+			// Use PixelX/PixelY since enemies are in pixels
+			px := player.PixelX() + player.Hitbox.Body.OffsetX
+			py := player.PixelY() + player.Hitbox.Body.OffsetY
 			pw := player.Hitbox.Body.Width
 			ph := player.Hitbox.Body.Height
 
@@ -559,13 +561,14 @@ func (s *CombatSystem) damagePlayer(player *entity.Player, damage int, fromX int
 	player.IframeTimer = s.config.Physics.Combat.Iframes
 	player.StunTimer = s.config.Physics.Combat.Knockback.StunDuration
 
-	// Knockback
+	// Knockback - compare in same scale (fromX is in pixels, player.X is 100x scaled)
 	dir := 1.0
-	if fromX > player.X {
+	if fromX > player.PixelX() {
 		dir = -1.0
 	}
-	player.VX = dir * s.config.Physics.Combat.Knockback.Force
-	player.VY = -s.config.Physics.Combat.Knockback.UpForce
+	// VX is in 100x scale, config force is in pixels/sec
+	player.VX = dir * s.config.Physics.Combat.Knockback.Force * entity.PositionScale
+	player.VY = -s.config.Physics.Combat.Knockback.UpForce * entity.PositionScale
 
 	if s.OnScreenShake != nil {
 		s.OnScreenShake(s.config.Physics.Feedback.ScreenShake.Intensity * 1.5)

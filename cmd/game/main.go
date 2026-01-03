@@ -59,8 +59,7 @@ type Game struct {
 	mouseWorldY float64
 
 	// Arrow selection UI
-	arrowSelectUI    *entity.ArrowSelectUI
-	frameSkipCounter int
+	arrowSelectUI *entity.ArrowSelectUI
 }
 
 // NewGame creates a new game instance
@@ -181,21 +180,9 @@ func (g *Game) updatePlaying() {
 		}
 	}
 
-	// Game speed slowdown when arrow selection UI is active
-	if g.arrowSelectUI.IsActive() {
-		g.frameSkipCounter++
-		if g.frameSkipCounter < 10 {
-			// Only update screen shake decay during slowdown
-			g.screenShakeX *= g.shakeDecay
-			g.screenShakeY *= g.shakeDecay
-			return
-		}
-		g.frameSkipCounter = 0
-	}
-
-	// Calculate camera offset for mouse world position
-	camX := g.player.X - g.screenW/2 + 8
-	camY := g.player.Y - g.screenH/2 + 12
+	// Calculate camera offset for mouse world position (use pixel coordinates)
+	camX := g.player.PixelX() - g.screenW/2 + 8
+	camY := g.player.PixelY() - g.screenH/2 + 12
 	if camX < 0 {
 		camX = 0
 	}
@@ -217,16 +204,22 @@ func (g *Game) updatePlaying() {
 
 	// Handle attack (mouse click) - only when arrow selection UI is not active
 	if input.MouseClick && !g.arrowSelectUI.IsActive() {
-		arrowX := float64(g.player.X + 8)
-		arrowY := float64(g.player.Y + 10)
+		arrowX := float64(g.player.PixelX() + 8)
+		arrowY := float64(g.player.PixelY() + 10)
 		g.combatSystem.SpawnPlayerArrowToward(arrowX, arrowY, g.mouseWorldX, g.mouseWorldY)
 	}
 
 	// Update player with input
 	g.inputSystem.UpdatePlayer(g.player, input, g.dt)
 
-	// Update physics
-	g.physicsSystem.Update(g.player, g.dt)
+	// Update physics with sub-steps
+	// Normal: 10 sub-steps = full speed
+	// Slow motion: 1 sub-step = 1/10 speed
+	subSteps := 10
+	if g.arrowSelectUI.IsActive() {
+		subSteps = 1
+	}
+	g.physicsSystem.Update(g.player, g.dt, subSteps)
 
 	// Update combat
 	g.combatSystem.Update(g.player, g.dt)
@@ -249,8 +242,8 @@ func (g *Game) checkSpikeDamage() {
 		return
 	}
 
-	// Check feet hitbox against spikes
-	fx, fy, fw, fh := g.player.Hitbox.Feet.GetWorldRect(g.player.X, g.player.Y, g.player.FacingRight, 16)
+	// Check feet hitbox against spikes (use pixel coordinates)
+	fx, fy, fw, fh := g.player.Hitbox.Feet.GetWorldRect(g.player.PixelX(), g.player.PixelY(), g.player.FacingRight, 16)
 
 	for py := fy; py < fy+fh; py++ {
 		for px := fx; px < fx+fw; px++ {
@@ -258,7 +251,7 @@ func (g *Game) checkSpikeDamage() {
 			if tile.Type == entity.TileSpike {
 				g.player.Health -= tile.Damage
 				g.player.IframeTimer = g.config.Physics.Combat.Iframes
-				g.player.VY = -150 // Bounce up
+				g.player.VY = -150 * entity.PositionScale // Bounce up (100x scaled)
 				g.screenShakeX = g.config.Physics.Feedback.ScreenShake.Intensity
 				g.screenShakeY = g.config.Physics.Feedback.ScreenShake.Intensity
 				return
@@ -268,8 +261,7 @@ func (g *Game) checkSpikeDamage() {
 }
 
 func (g *Game) restart() {
-	g.player.X = g.stage.SpawnX
-	g.player.Y = g.stage.SpawnY
+	g.player.SetPixelPos(g.stage.SpawnX, g.stage.SpawnY)
 	g.player.VX = 0
 	g.player.VY = 0
 	g.player.Health = g.player.MaxHealth
@@ -304,9 +296,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	// Fill background
 	screen.Fill(colorBG)
 
-	// Calculate camera offset
-	camX := g.player.X - g.screenW/2 + 8
-	camY := g.player.Y - g.screenH/2 + 12
+	// Calculate camera offset (use pixel coordinates)
+	camX := g.player.PixelX() - g.screenW/2 + 8
+	camY := g.player.PixelY() - g.screenH/2 + 12
 
 	// Apply screen shake
 	camX += int(g.screenShakeX * (2*randFloat() - 1))
@@ -391,8 +383,8 @@ func (g *Game) drawTiles(screen *ebiten.Image, camX, camY int) {
 }
 
 func (g *Game) drawPlayer(screen *ebiten.Image, camX, camY int) {
-	playerScreenX := float64(g.player.X - camX)
-	playerScreenY := float64(g.player.Y - camY)
+	playerScreenX := float64(g.player.PixelX() - camX)
+	playerScreenY := float64(g.player.PixelY() - camY)
 
 	playerW := float64(g.config.Entities.Player.Sprite.FrameWidth)
 	playerH := float64(g.config.Entities.Player.Sprite.FrameHeight)
@@ -405,12 +397,12 @@ func (g *Game) drawPlayer(screen *ebiten.Image, camX, camY int) {
 
 	ebitenutil.DrawRect(screen, playerScreenX, playerScreenY, playerW, playerH, playerColor)
 
-	// Draw hitbox debug
+	// Draw hitbox debug (use pixel coordinates)
 	if ebiten.IsKeyPressed(ebiten.KeyTab) {
-		hx, hy, hw, hh := g.player.Hitbox.Head.GetWorldRect(g.player.X, g.player.Y, g.player.FacingRight, 16)
+		hx, hy, hw, hh := g.player.Hitbox.Head.GetWorldRect(g.player.PixelX(), g.player.PixelY(), g.player.FacingRight, 16)
 		ebitenutil.DrawRect(screen, float64(hx-camX), float64(hy-camY), float64(hw), float64(hh), colorHead)
 
-		fx, fy, fw, fh := g.player.Hitbox.Feet.GetWorldRect(g.player.X, g.player.Y, g.player.FacingRight, 16)
+		fx, fy, fw, fh := g.player.Hitbox.Feet.GetWorldRect(g.player.PixelX(), g.player.PixelY(), g.player.FacingRight, 16)
 		ebitenutil.DrawRect(screen, float64(fx-camX), float64(fy-camY), float64(fw), float64(fh), colorFeet)
 	}
 }
@@ -619,9 +611,9 @@ func (g *Game) drawTrajectory(screen *ebiten.Image, camX, camY int) {
 	// Get arrow physics config
 	speed, gravity, maxFall, maxRange := g.combatSystem.GetArrowConfig()
 
-	// Arrow start position
-	startX := float64(g.player.X + 8)
-	startY := float64(g.player.Y + 10)
+	// Arrow start position (use pixel coordinates)
+	startX := float64(g.player.PixelX() + 8)
+	startY := float64(g.player.PixelY() + 10)
 
 	// Calculate initial velocity toward mouse
 	dx := g.mouseWorldX - startX

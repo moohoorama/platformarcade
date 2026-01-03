@@ -128,7 +128,8 @@ func (s *InputSystem) updateTimers(player *entity.Player, dt float64) {
 // handleMovement handles horizontal movement
 func (s *InputSystem) handleMovement(player *entity.Player, input InputState) {
 	targetVX := 0.0
-	maxSpeed := s.config.Movement.MaxSpeed
+	// Config values are in pixels/sec, convert to 100x scaled units
+	maxSpeed := s.config.Movement.MaxSpeed * entity.PositionScale
 
 	if input.Left {
 		targetVX = -maxSpeed
@@ -146,7 +147,8 @@ func (s *InputSystem) handleMovement(player *entity.Player, input InputState) {
 
 	// Acceleration/Deceleration
 	if targetVX != 0 {
-		accel := s.config.Movement.Acceleration
+		// Scale acceleration to 100x units
+		accel := s.config.Movement.Acceleration * entity.PositionScale
 
 		// Turnaround boost
 		if (player.VX > 0 && targetVX < 0) || (player.VX < 0 && targetVX > 0) {
@@ -166,8 +168,8 @@ func (s *InputSystem) handleMovement(player *entity.Player, input InputState) {
 			}
 		}
 	} else {
-		// Deceleration
-		decel := s.config.Movement.Deceleration * (1.0 / 60.0)
+		// Deceleration (scale to 100x units)
+		decel := s.config.Movement.Deceleration * entity.PositionScale * (1.0 / 60.0)
 		if player.VX > 0 {
 			player.VX -= decel
 			if player.VX < 0 {
@@ -194,7 +196,8 @@ func (s *InputSystem) handleJump(player *entity.Player, input InputState) {
 	wantsJump := player.JumpBufferTimer > 0
 
 	if canJump && wantsJump {
-		player.VY = -s.config.Jump.Force
+		// Scale jump force to 100x units
+		player.VY = -s.config.Jump.Force * entity.PositionScale
 		player.OnGround = false
 		player.CoyoteTimer = 0
 		player.JumpBufferTimer = 0
@@ -219,11 +222,11 @@ func (s *InputSystem) handleDash(player *entity.Player, input InputState) {
 	player.CanDash = false
 	player.IframeTimer = s.config.Dash.IframesDuration
 
-	// Set dash velocity
+	// Set dash velocity (scale to 100x units)
 	dir := 1.0
 	if !player.FacingRight {
 		dir = -1.0
 	}
-	player.VX = dir * s.config.Dash.Speed
+	player.VX = dir * s.config.Dash.Speed * entity.PositionScale
 	player.VY = 0
 }

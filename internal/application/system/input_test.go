@@ -193,7 +193,8 @@ func TestInputSystem_HandleDash(t *testing.T) {
 
 		assert.True(t, player.Dashing)
 		assert.False(t, player.CanDash)
-		assert.Equal(t, cfg.Dash.Speed, player.VX)
+		// VX is now in 100x scaled units
+		assert.Equal(t, cfg.Dash.Speed*entity.PositionScale, player.VX)
 		assert.Equal(t, 0.0, player.VY)
 	})
 
@@ -205,7 +206,8 @@ func TestInputSystem_HandleDash(t *testing.T) {
 		input := InputState{Dash: true}
 		sys.handleDash(player, input)
 
-		assert.Equal(t, -cfg.Dash.Speed, player.VX)
+		// VX is now in 100x scaled units
+		assert.Equal(t, -cfg.Dash.Speed*entity.PositionScale, player.VX)
 	})
 
 	t.Run("cannot dash when already dashing", func(t *testing.T) {
@@ -253,7 +255,8 @@ func TestInputSystem_HandleJump(t *testing.T) {
 		input := InputState{}
 		sys.handleJump(player, input)
 
-		assert.Equal(t, -cfg.Jump.Force, player.VY)
+		// VY is now in 100x scaled units
+		assert.Equal(t, -cfg.Jump.Force*entity.PositionScale, player.VY)
 		assert.False(t, player.OnGround)
 		assert.Equal(t, 0.0, player.JumpBufferTimer)
 	})
@@ -267,7 +270,8 @@ func TestInputSystem_HandleJump(t *testing.T) {
 		input := InputState{}
 		sys.handleJump(player, input)
 
-		assert.Equal(t, -cfg.Jump.Force, player.VY)
+		// VY is now in 100x scaled units
+		assert.Equal(t, -cfg.Jump.Force*entity.PositionScale, player.VY)
 		assert.Equal(t, 0.0, player.CoyoteTimer)
 	})
 
