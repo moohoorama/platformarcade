@@ -69,6 +69,10 @@ type Playing struct {
 	// Input recording
 	recorder       *Recorder
 	recordFilename string
+
+	// Enemy spawner
+	spawnTimer  int
+	nextEnemyID entity.EntityID
 }
 
 // New creates a new Playing scene.
@@ -152,6 +156,9 @@ func New(cfg *config.GameConfig, stageCfg *config.StageConfig, stage *entity.Sta
 	for i, spawn := range stageCfg.Enemies {
 		combatSystem.SpawnEnemy(entity.EntityID(i+1), spawn.X, spawn.Y, spawn.Type, spawn.FacingRight)
 	}
+
+	// Initialize enemy ID counter for spawner
+	p.nextEnemyID = entity.EntityID(len(stageCfg.Enemies) + 1)
 
 	return p
 }
@@ -256,13 +263,15 @@ func (p *Playing) updatePlaying() {
 	// Normal: 10 sub-steps = full speed
 	// Slow motion: 1 sub-step = 1/10 speed
 	subSteps := 10
+	effectiveDt := p.dt
 	if p.arrowSelectUI.IsActive() {
 		subSteps = 1
+		effectiveDt = p.dt / 10 // Slow down combat too
 	}
 	p.physicsSystem.Update(p.player, p.dt, subSteps)
 
-	// Update combat
-	p.combatSystem.Update(p.player, p.dt)
+	// Update combat (also slowed during arrow select)
+	p.combatSystem.Update(p.player, effectiveDt)
 
 	// Check spike damage
 	p.checkSpikeDamage()
@@ -270,6 +279,21 @@ func (p *Playing) updatePlaying() {
 	// Decay screen shake
 	p.screenShakeX *= p.shakeDecay
 	p.screenShakeY *= p.shakeDecay
+
+	// Spawn enemies periodically (max 10 active enemies)
+	p.spawnTimer++
+	if p.spawnTimer >= 30 {
+		p.spawnTimer = 0
+		activeCount := 0
+		for _, e := range p.combatSystem.GetEnemies() {
+			if e.Active {
+				activeCount++
+			}
+		}
+		if activeCount < 10 {
+			p.spawnEnemyOnRight()
+		}
+	}
 
 	// Check game over
 	if p.player.Health <= 0 {
@@ -322,6 +346,36 @@ func (p *Playing) checkSpikeDamage() {
 	}
 }
 
+func (p *Playing) spawnEnemyOnRight() {
+	// Spawn on the right side of the stage (2 tiles from the edge)
+	spawnX := (p.stage.Width - 3) * p.tileSize
+
+	// Try to find a valid Y position (not in a wall, on ground)
+	maxAttempts := 20
+	for i := 0; i < maxAttempts; i++ {
+		// Random Y between tile 1 and height-2 (avoid top/bottom walls)
+		tileY := 1 + p.rng.Intn(p.stage.Height-2)
+		spawnY := tileY * p.tileSize
+
+		// Check if this position is valid (not solid, has ground below)
+		if !p.stage.IsSolidAt(spawnX, spawnY) && !p.stage.IsSolidAt(spawnX, spawnY+p.tileSize-1) {
+			// Check if there's ground below (within a few tiles)
+			hasGround := false
+			for checkY := spawnY + p.tileSize; checkY < p.stage.Height*p.tileSize; checkY += p.tileSize {
+				if p.stage.IsSolidAt(spawnX, checkY) {
+					hasGround = true
+					break
+				}
+			}
+			if hasGround {
+				p.combatSystem.SpawnEnemy(p.nextEnemyID, spawnX, spawnY, "berserker", false)
+				p.nextEnemyID++
+				return
+			}
+		}
+	}
+}
+
 func (p *Playing) restart() {
 	// Reset RNG with new seed
 	p.seed = time.Now().UnixNano()
@@ -355,6 +409,10 @@ func (p *Playing) restart() {
 	for i, spawn := range p.stageCfg.Enemies {
 		p.combatSystem.SpawnEnemy(entity.EntityID(i+1), spawn.X, spawn.Y, spawn.Type, spawn.FacingRight)
 	}
+
+	// Reset spawner
+	p.spawnTimer = 0
+	p.nextEnemyID = entity.EntityID(len(p.stageCfg.Enemies) + 1)
 
 	// Reset recorder if recording
 	if p.recordFilename != "" {

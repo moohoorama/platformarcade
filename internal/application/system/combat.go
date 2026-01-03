@@ -127,6 +127,7 @@ func (s *CombatSystem) SpawnEnemy(id entity.EntityID, x, y int, enemyType string
 func (s *CombatSystem) Update(player *entity.Player, dt float64) {
 	s.updateProjectiles(dt)
 	s.updateEnemies(player, dt)
+	s.resolveEnemyCollisions()
 	s.updateGolds(player, dt)
 	s.checkCollisions(player)
 }
@@ -236,6 +237,45 @@ func (s *CombatSystem) updateEnemies(player *entity.Player, dt float64) {
 			s.updateChaseAI(enemy, player, dist, dx, dy, dt)
 		case entity.AIAggressive:
 			s.updateAggressiveAI(enemy, player, dist, dx, dy, dt)
+		}
+	}
+}
+
+// resolveEnemyCollisions pushes overlapping enemies apart
+func (s *CombatSystem) resolveEnemyCollisions() {
+	for i := 0; i < len(s.enemies); i++ {
+		e1 := s.enemies[i]
+		if !e1.Active {
+			continue
+		}
+		x1, y1, w1, h1 := e1.GetHitbox()
+
+		for j := i + 1; j < len(s.enemies); j++ {
+			e2 := s.enemies[j]
+			if !e2.Active {
+				continue
+			}
+			x2, y2, w2, h2 := e2.GetHitbox()
+
+			// Check overlap
+			if !rectsOverlap(x1, y1, w1, h1, x2, y2, w2, h2) {
+				continue
+			}
+
+			// Calculate centers
+			cx1 := float64(x1) + float64(w1)/2
+			cx2 := float64(x2) + float64(w2)/2
+
+			// Push apart horizontally (simpler than full 2D resolution)
+			pushAmount := 2 // pixels per frame
+			if cx1 < cx2 {
+				// e1 is left, e2 is right - push apart
+				e1.X -= pushAmount
+				e2.X += pushAmount
+			} else {
+				e1.X += pushAmount
+				e2.X -= pushAmount
+			}
 		}
 	}
 }
