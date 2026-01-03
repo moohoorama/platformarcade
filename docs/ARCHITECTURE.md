@@ -4,6 +4,74 @@
 
 ---
 
+## 0. Directory Structure & Config System
+
+### 0.1 프로젝트 구조
+
+```
+mg/
+├── cmd/game/
+│   ├── main.go              # Entry point, game loop, rendering
+│   ├── embed.go             # Go embed directive
+│   └── configs/             # ⚠️ EMBEDDED configs (빌드에 포함됨)
+│       ├── physics.json
+│       ├── entities.json
+│       └── stages/demo.json
+│
+├── configs/                  # ⚠️ SOURCE configs (이곳을 수정!)
+│   ├── physics.json
+│   ├── entities.json
+│   └── stages/demo.json
+│
+├── internal/
+│   ├── application/
+│   │   ├── state/           # GameState enum
+│   │   └── system/          # PhysicsSystem, InputSystem, CombatSystem
+│   ├── domain/
+│   │   └── entity/          # Body, Player, Enemy, Projectile, Stage
+│   └── infrastructure/
+│       └── config/          # Config loader and types
+│
+├── docs/                     # Documentation
+│   ├── ARCHITECTURE.md      # This file
+│   └── plans/               # Feature plans
+│
+├── assets/sprites/           # Image assets
+├── web/                      # WASM build output
+└── bin/                      # Native build output
+```
+
+### 0.2 Config 이중 구조 (⚠️ 중요)
+
+| 경로 | 역할 | 수정 여부 |
+|------|------|----------|
+| `configs/` | **원본 설정** | ✅ 여기를 수정 |
+| `cmd/game/configs/` | **Embedded 설정** | ❌ 직접 수정 금지 |
+
+**왜 두 개인가?**
+- `cmd/game/configs/`는 `//go:embed`로 바이너리에 포함
+- WebAssembly 빌드 시 외부 파일 접근 불가능하므로 embed 필요
+
+**Config 동기화 워크플로우:**
+```bash
+# 1. configs/ 수정 후
+cp configs/*.json cmd/game/configs/
+cp configs/stages/*.json cmd/game/configs/stages/
+
+# 2. 다시 빌드
+go build ./...
+```
+
+### 0.3 Config 파일별 역할
+
+| 파일 | 내용 |
+|------|------|
+| `physics.json` | 중력, 이동, 점프, 대시, 충돌, 전투, 피드백, **projectile.velocityInfluence** |
+| `entities.json` | Player, Enemies, Projectiles, Pickups 정의 |
+| `stages/demo.json` | 스테이지 레이아웃, 적 배치 |
+
+---
+
 ## 1. Overall Architecture
 
 ### 1.1 레이어 구조
@@ -341,10 +409,11 @@ func (s *PhysicsSystem) tryCornerCorrection(player *entity.Player) {
 
 ---
 
-## 6. Integer Position with Remainder
+## 6. 100x Position Scale (Player)
 
 ### 6.1 설계 결정
 
+**기존 (RemX/RemY 방식):**
 ```go
 type Body struct {
     X, Y       int     // 정수 위치 (픽셀)
@@ -353,38 +422,63 @@ type Body struct {
 }
 ```
 
-**왜 정수 위치?**
-- 결정론적 충돌 판정
-- 타일 기반 게임과 자연스러운 호환
-- 부동소수점 오차 누적 방지
-
-### 6.2 Remainder 시스템
-
+**현재 (100x 스케일):**
 ```go
-func (b *Body) ApplyVelocity(dt float64) (dx, dy int) {
-    // 속도를 거리로 변환 + 이전 나머지 추가
-    moveX := b.VX*dt + b.RemX
-    moveY := b.VY*dt + b.RemY
+const PositionScale = 100  // 1 pixel = 100 units
 
-    // 정수 부분 추출
-    dx = int(moveX)
-    dy = int(moveY)
-
-    // 소수 부분 저장 (다음 프레임에 누적)
-    b.RemX = moveX - float64(dx)
-    b.RemY = moveY - float64(dy)
-
-    return dx, dy
+type Body struct {
+    X, Y   int     // 100x 스케일 위치 (100 = 1픽셀)
+    VX, VY float64 // 100x 스케일 속도
+    // RemX, RemY 제거됨
 }
 ```
 
-**예시:**
+**왜 100x 스케일?**
+- 0.01 픽셀 정밀도 (RemX/RemY 불필요)
+- Sub-step 물리와 자연스러운 통합
+- 슬로우모션 시 부드러운 움직임
+
+### 6.2 좌표 변환
+
+```go
+// Internal → Pixel (렌더링, 충돌 체크용)
+func (b *Body) PixelX() int { return b.X / PositionScale }
+func (b *Body) PixelY() int { return b.Y / PositionScale }
+
+// Pixel → Internal (스폰, 초기화용)
+func (b *Body) SetPixelPos(x, y int) {
+    b.X = x * PositionScale
+    b.Y = y * PositionScale
+}
+
+// Config 값 변환 (config는 픽셀 단위)
+player.VX = config.Movement.MaxSpeed * entity.PositionScale  // 120 → 12000
 ```
-VX = 50px/s, dt = 1/60 → moveX = 0.833px
-Frame 1: dx=0, RemX=0.833
-Frame 2: moveX = 0.833 + 0.833 = 1.666, dx=1, RemX=0.666
-Frame 3: moveX = 0.833 + 0.666 = 1.499, dx=1, RemX=0.499
+
+### 6.3 Sub-step 물리
+
+```go
+func (s *PhysicsSystem) Update(player *entity.Player, dt float64, subSteps int) {
+    dtPerStep := dt / 10.0  // 항상 1/10 프레임 단위
+
+    for i := 0; i < subSteps; i++ {
+        s.updateStep(player, dtPerStep)
+    }
+}
 ```
+
+| 상태 | subSteps | 효과 |
+|------|----------|------|
+| 일반 | 10 | 풀 스피드 |
+| 슬로우모션 | 1 | 1/10 속도 |
+
+### 6.4 적용 범위
+
+| 엔티티 | 100x 스케일 | 비고 |
+|--------|-------------|------|
+| Player | ✅ 적용됨 | Body, VX, VY |
+| Enemy | ❌ 미적용 | 여전히 RemX/RemY 사용 |
+| Projectile | ❌ 미적용 | 여전히 RemX/RemY 사용 |
 
 ---
 

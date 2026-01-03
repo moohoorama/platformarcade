@@ -43,7 +43,7 @@
         "launchAngleDeg": 20,
         "gravityAccel": 500,
         "maxFallSpeed": 350,
-        "maxRange": 180,
+        "maxRange": 300,
         "rotateToVelocity": true,
         "piercing": false
       },

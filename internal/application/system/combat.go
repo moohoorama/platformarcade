@@ -52,13 +52,17 @@ func (s *CombatSystem) SpawnPlayerArrow(x, y float64, facingRight bool) {
 }
 
 // SpawnPlayerArrowToward spawns an arrow toward a target position
-func (s *CombatSystem) SpawnPlayerArrowToward(x, y, targetX, targetY float64) {
+// playerVX, playerVY: player's velocity in pixels/sec (NOT 100x scaled)
+func (s *CombatSystem) SpawnPlayerArrowToward(x, y, targetX, targetY, playerVX, playerVY float64) {
 	arrowCfg := s.config.Entities.Projectiles["playerArrow"]
+	velocityInfluence := s.config.Physics.Projectile.VelocityInfluence
 
-	arrow := entity.NewArrowDirected(
+	arrow := entity.NewArrowDirectedWithVelocity(
 		x, y,
 		targetX, targetY,
 		arrowCfg.Physics.Speed,
+		playerVX, playerVY,
+		velocityInfluence,
 		arrowCfg.Physics.GravityAccel,
 		arrowCfg.Physics.MaxFallSpeed,
 		arrowCfg.Physics.MaxRange,
@@ -70,9 +74,9 @@ func (s *CombatSystem) SpawnPlayerArrowToward(x, y, targetX, targetY float64) {
 }
 
 // GetArrowConfig returns the player arrow configuration
-func (s *CombatSystem) GetArrowConfig() (speed, gravity, maxFall, maxRange float64) {
+func (s *CombatSystem) GetArrowConfig() (speed, gravity, maxFall, maxRange, velocityInfluence float64) {
 	arrowCfg := s.config.Entities.Projectiles["playerArrow"]
-	return arrowCfg.Physics.Speed, arrowCfg.Physics.GravityAccel, arrowCfg.Physics.MaxFallSpeed, arrowCfg.Physics.MaxRange
+	return arrowCfg.Physics.Speed, arrowCfg.Physics.GravityAccel, arrowCfg.Physics.MaxFallSpeed, arrowCfg.Physics.MaxRange, s.config.Physics.Projectile.VelocityInfluence
 }
 
 // SpawnEnemy spawns an enemy at the given position

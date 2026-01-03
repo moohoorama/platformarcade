@@ -206,7 +206,14 @@ func (g *Game) updatePlaying() {
 	if input.MouseClick && !g.arrowSelectUI.IsActive() {
 		arrowX := float64(g.player.PixelX() + 8)
 		arrowY := float64(g.player.PixelY() + 10)
-		g.combatSystem.SpawnPlayerArrowToward(arrowX, arrowY, g.mouseWorldX, g.mouseWorldY)
+		// Convert player velocity from 100x scaled to pixels/sec
+		// Zero out VY when on ground (VY oscillates due to gravity/collision cycle)
+		playerVX := g.player.VX / entity.PositionScale
+		playerVY := g.player.VY / entity.PositionScale
+		if g.player.OnGround {
+			playerVY = 0
+		}
+		g.combatSystem.SpawnPlayerArrowToward(arrowX, arrowY, g.mouseWorldX, g.mouseWorldY, playerVX, playerVY)
 	}
 
 	// Update player with input
@@ -609,7 +616,7 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 
 func (g *Game) drawTrajectory(screen *ebiten.Image, camX, camY int) {
 	// Get arrow physics config
-	speed, gravity, maxFall, maxRange := g.combatSystem.GetArrowConfig()
+	speed, gravity, maxFall, maxRange, velocityInfluence := g.combatSystem.GetArrowConfig()
 
 	// Arrow start position (use pixel coordinates)
 	startX := float64(g.player.PixelX() + 8)
@@ -624,6 +631,17 @@ func (g *Game) drawTrajectory(screen *ebiten.Image, camX, camY int) {
 	}
 	vx := (dx / dist) * speed
 	vy := (dy / dist) * speed
+
+	// Add player velocity with influence multiplier
+	// Note: When on ground, VY oscillates due to gravity/collision cycle,
+	// so we zero it out for stable trajectory prediction
+	playerVX := g.player.VX / entity.PositionScale
+	playerVY := g.player.VY / entity.PositionScale
+	if g.player.OnGround {
+		playerVY = 0
+	}
+	vx += playerVX * velocityInfluence
+	vy += playerVY * velocityInfluence
 
 	// Trajectory color - white with slight tint of current arrow color
 	arrowColor := entity.ArrowColors[g.player.CurrentArrow]

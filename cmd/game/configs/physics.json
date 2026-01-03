@@ -76,5 +76,8 @@
     "radius": 32,
     "minDistance": 16,
     "maxFrame": 10
+  },
+  "projectile": {
+    "velocityInfluence": 0.2
   }
 }

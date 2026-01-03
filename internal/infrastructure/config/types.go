@@ -10,7 +10,8 @@ type PhysicsConfig struct {
 	Collision   CollisionConfig   `json:"collision"`
 	Combat      CombatConfig      `json:"combat"`
 	Feedback    FeedbackConfig    `json:"feedback"`
-	ArrowSelect ArrowSelectConfig `json:"arrowSelect"`
+	ArrowSelect        ArrowSelectConfig        `json:"arrowSelect"`
+	Projectile         ProjectileBehaviorConfig `json:"projectile"`
 }
 
 // ArrowSelectConfig configures the arrow selection UI
@@ -113,4 +114,13 @@ type SquashStretchConfig struct {
 type ScaleXY struct {
 	X float64 `json:"x"`
 	Y float64 `json:"y"`
+}
+
+// ProjectileBehaviorConfig configures projectile physics behavior
+type ProjectileBehaviorConfig struct {
+	// VelocityInfluence controls how much player velocity affects arrow velocity
+	// 0.0 = no influence (arrow fires at fixed speed)
+	// 1.0 = full influence (player velocity is fully added to arrow)
+	// 0.5 = partial influence (50% of player velocity is added)
+	VelocityInfluence float64 `json:"velocityInfluence"`
 }

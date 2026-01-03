@@ -61,6 +61,12 @@ func (s *PhysicsSystem) applyGravity(player *entity.Player, dt float64) {
 		return // No gravity during dash
 	}
 
+	// Don't apply gravity when on ground and not moving up
+	// (ground's normal force balances gravity)
+	if player.OnGround && player.VY >= 0 {
+		return
+	}
+
 	// Config gravity is in pixels/sec², convert to 100x units
 	gravity := s.config.Physics.Gravity * entity.PositionScale
 

@@ -60,6 +60,13 @@ func NewArrow(x, y float64, facingRight bool, speed, launchAngleDeg, gravityAcce
 
 // NewArrowDirected creates a new arrow projectile toward a target direction
 func NewArrowDirected(x, y, targetX, targetY, speed, gravityAccel, maxFallSpeed, maxRange float64, damage int, isPlayer bool) *Projectile {
+	return NewArrowDirectedWithVelocity(x, y, targetX, targetY, speed, 0, 0, 0, gravityAccel, maxFallSpeed, maxRange, damage, isPlayer)
+}
+
+// NewArrowDirectedWithVelocity creates an arrow with player velocity influence
+// playerVX, playerVY: player's current velocity (in pixels/sec, NOT 100x scaled)
+// velocityInfluence: 0.0 = no influence, 1.0 = full influence
+func NewArrowDirectedWithVelocity(x, y, targetX, targetY, speed, playerVX, playerVY, velocityInfluence, gravityAccel, maxFallSpeed, maxRange float64, damage int, isPlayer bool) *Projectile {
 	dx := targetX - x
 	dy := targetY - y
 	dist := math.Sqrt(dx*dx + dy*dy)
@@ -67,8 +74,13 @@ func NewArrowDirected(x, y, targetX, targetY, speed, gravityAccel, maxFallSpeed,
 		dist = 1
 	}
 
+	// Base arrow velocity (toward target)
 	vx := (dx / dist) * speed
 	vy := (dy / dist) * speed
+
+	// Add player velocity with influence multiplier
+	vx += playerVX * velocityInfluence
+	vy += playerVY * velocityInfluence
 
 	return &Projectile{
 		X:             x,
