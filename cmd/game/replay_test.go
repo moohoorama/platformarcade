@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/younwookim/mg/internal/application/replay"
+	"github.com/younwookim/mg/internal/application/scene/playing"
 	"github.com/younwookim/mg/internal/application/system"
 	"github.com/younwookim/mg/internal/domain/entity"
 	"github.com/younwookim/mg/internal/infrastructure/config"
@@ -317,7 +318,7 @@ func TestRecorderAndReplayer(t *testing.T) {
 	stage := "demo"
 
 	// Record some inputs
-	recorder := NewRecorder(seed, stage)
+	recorder := playing.NewRecorder(seed, stage)
 	inputs := []system.InputState{
 		{Left: false, Right: true, MouseX: 100, MouseY: 100},
 		{Left: false, Right: true, Jump: true, JumpPressed: true, MouseX: 110, MouseY: 95},
@@ -332,7 +333,7 @@ func TestRecorderAndReplayer(t *testing.T) {
 	assert.Equal(t, 4, recorder.FrameCount())
 
 	// Create replayer from recorded data
-	replayer := replay.NewReplayer(recorder.data)
+	replayer := replay.NewReplayer(recorder.GetData())
 	assert.Equal(t, seed, replayer.Seed())
 	assert.Equal(t, 4, replayer.TotalFrames())
 
