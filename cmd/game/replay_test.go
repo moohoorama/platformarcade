@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/younwookim/mg/internal/application/replay"
 	"github.com/younwookim/mg/internal/application/system"
 	"github.com/younwookim/mg/internal/domain/entity"
 	"github.com/younwookim/mg/internal/infrastructure/config"
@@ -79,17 +80,17 @@ func createTestPlayer(stage *entity.Stage) *entity.Player {
 
 // SimulationResult contains the results of a replay simulation
 type SimulationResult struct {
-	VYValues    []float64
-	VXValues    []float64
-	Positions   []struct{ X, Y int }
-	FinalFrame  int
-	VYMin       float64
-	VYMax       float64
+	VYValues      []float64
+	VXValues      []float64
+	Positions     []struct{ X, Y int }
+	FinalFrame    int
+	VYMin         float64
+	VYMax         float64
 	VYFluctuation bool
 }
 
 // simulateWithReplay runs a game simulation using replayed inputs
-func simulateWithReplay(replayer *Replayer, cfg *config.PhysicsConfig, stage *entity.Stage, player *entity.Player) SimulationResult {
+func simulateWithReplay(replayer *replay.Replayer, cfg *config.PhysicsConfig, stage *entity.Stage, player *entity.Player) SimulationResult {
 	inputSystem := system.NewInputSystem(cfg)
 	physicsSystem := system.NewPhysicsSystem(cfg, stage)
 	dt := 1.0 / 60.0
@@ -147,8 +148,8 @@ func simulateWithReplay(replayer *Replayer, cfg *config.PhysicsConfig, stage *en
 
 func TestReplayIdlePlayer_VelocityStability(t *testing.T) {
 	// Create test replay data: player standing still for 120 frames (2 seconds)
-	replayData := CreateTestReplayData(120, 160, 120)
-	replayer := NewReplayer(replayData)
+	replayData := replay.CreateTestReplayData(120, 160, 120)
+	replayer := replay.NewReplayer(replayData)
 
 	cfg := createTestConfig()
 	stage := createTestStageWithGround()
@@ -171,8 +172,8 @@ func TestReplayIdlePlayer_TrajectoryStability(t *testing.T) {
 	// This test simulates the trajectory calculation that was wobbling
 	// When player is idle, trajectory should be consistent
 
-	replayData := CreateTestReplayData(60, 200, 100) // Mouse at (200, 100)
-	replayer := NewReplayer(replayData)
+	replayData := replay.CreateTestReplayData(60, 200, 100) // Mouse at (200, 100)
+	replayer := replay.NewReplayer(replayData)
 
 	cfg := createTestConfig()
 	stage := createTestStageWithGround()
@@ -184,9 +185,9 @@ func TestReplayIdlePlayer_TrajectoryStability(t *testing.T) {
 
 	// Simulate and calculate trajectory direction each frame
 	type TrajectorySnapshot struct {
-		PlayerVY      float64
-		AdjustedVY    float64 // VY after OnGround check
-		OnGround      bool
+		PlayerVY   float64
+		AdjustedVY float64 // VY after OnGround check
+		OnGround   bool
 	}
 	snapshots := make([]TrajectorySnapshot, 0, 60)
 
@@ -234,18 +235,18 @@ func TestReplayIdlePlayer_TrajectoryStability(t *testing.T) {
 
 func TestReplayDeterminism(t *testing.T) {
 	// Test that replaying the same inputs produces identical results
-	replayData := CreateTestReplayData(60, 160, 120)
+	replayData := replay.CreateTestReplayData(60, 160, 120)
 
 	cfg := createTestConfig()
 	stage := createTestStageWithGround()
 
 	// Run simulation twice
 	player1 := createTestPlayer(stage)
-	replayer1 := NewReplayer(replayData)
+	replayer1 := replay.NewReplayer(replayData)
 	result1 := simulateWithReplay(replayer1, cfg, stage, player1)
 
 	player2 := createTestPlayer(stage)
-	replayer2 := NewReplayer(replayData)
+	replayer2 := replay.NewReplayer(replayData)
 	result2 := simulateWithReplay(replayer2, cfg, stage, player2)
 
 	// Results should be identical
@@ -262,11 +263,11 @@ func TestReplayDeterminism(t *testing.T) {
 
 func TestReplayWithMovement(t *testing.T) {
 	// Create replay data with movement
-	data := ReplayData{
+	data := replay.ReplayData{
 		Version: "1.0",
 		Seed:    12345,
 		Stage:   "test",
-		Frames:  make([]FrameInput, 120),
+		Frames:  make([]replay.FrameInput, 120),
 	}
 
 	// First 30 frames: idle
@@ -274,7 +275,7 @@ func TestReplayWithMovement(t *testing.T) {
 	// Next 30 frames: jump
 	// Last 30 frames: idle
 	for i := 0; i < 120; i++ {
-		data.Frames[i] = FrameInput{F: i, MX: 160, MY: 120}
+		data.Frames[i] = replay.FrameInput{F: i, MX: 160, MY: 120}
 		if i >= 30 && i < 60 {
 			data.Frames[i].R = true // Move right
 		}
@@ -286,7 +287,7 @@ func TestReplayWithMovement(t *testing.T) {
 		}
 	}
 
-	replayer := NewReplayer(data)
+	replayer := replay.NewReplayer(data)
 	cfg := createTestConfig()
 	stage := createTestStageWithGround()
 	player := createTestPlayer(stage)
@@ -331,7 +332,7 @@ func TestRecorderAndReplayer(t *testing.T) {
 	assert.Equal(t, 4, recorder.FrameCount())
 
 	// Create replayer from recorded data
-	replayer := NewReplayer(recorder.data)
+	replayer := replay.NewReplayer(recorder.data)
 	assert.Equal(t, seed, replayer.Seed())
 	assert.Equal(t, 4, replayer.TotalFrames())
 

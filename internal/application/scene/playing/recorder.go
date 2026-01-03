@@ -1,4 +1,4 @@
-package main
+package playing
 
 import (
 	"encoding/json"
@@ -10,23 +10,25 @@ import (
 	"github.com/younwookim/mg/internal/application/system"
 )
 
-// Recorder handles input recording
+// Recorder handles input recording for replay
 type Recorder struct {
 	data      replay.ReplayData
+	filePath  string
 	recording bool
 	frame     int
 }
 
 // NewRecorder creates a new recorder
-func NewRecorder(seed int64, stage string) *Recorder {
+func NewRecorder(stage, filePath string) *Recorder {
 	return &Recorder{
 		data: replay.ReplayData{
 			Version:   "1.0",
-			Seed:      seed,
+			Seed:      0, // Will be set later if needed
 			Stage:     stage,
 			StartTime: time.Now().Format(time.RFC3339),
-			Frames:    make([]replay.FrameInput, 0, 3600), // Pre-allocate for ~1 minute at 60fps
+			Frames:    make([]replay.FrameInput, 0, 3600),
 		},
+		filePath:  filePath,
 		recording: true,
 		frame:     0,
 	}
@@ -60,12 +62,12 @@ func (r *Recorder) RecordFrame(input system.InputState) {
 }
 
 // Save writes the replay data to a file
-func (r *Recorder) Save(filename string) error {
+func (r *Recorder) Save() error {
 	if len(r.data.Frames) == 0 {
-		return fmt.Errorf("no frames to save")
+		return nil // Nothing to save
 	}
 
-	file, err := os.Create(filename)
+	file, err := os.Create(r.filePath)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
@@ -93,9 +95,4 @@ func (r *Recorder) IsRecording() bool {
 // FrameCount returns the number of recorded frames
 func (r *Recorder) FrameCount() int {
 	return len(r.data.Frames)
-}
-
-// GenerateFilename creates a filename based on current time
-func GenerateFilename() string {
-	return fmt.Sprintf("replay_%s.json", time.Now().Format("20060102_150405"))
 }

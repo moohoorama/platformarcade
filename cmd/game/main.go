@@ -13,6 +13,8 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
+	"github.com/younwookim/mg/internal/application/game"
+	"github.com/younwookim/mg/internal/application/scene"
 	"github.com/younwookim/mg/internal/application/state"
 	"github.com/younwookim/mg/internal/application/system"
 	"github.com/younwookim/mg/internal/domain/entity"
@@ -28,12 +30,10 @@ var (
 	colorFeet       = color.RGBA{200, 200, 100, 128}
 	colorBG         = color.RGBA{26, 26, 46, 255}
 	colorEnemy      = color.RGBA{200, 100, 100, 255}
-	colorArrow      = color.RGBA{255, 200, 100, 255}
 	colorEnemyArrow = color.RGBA{255, 100, 100, 255}
 	colorGold       = color.RGBA{255, 215, 0, 255}
 	colorHealthBG   = color.RGBA{60, 60, 60, 255}
 	colorHealthFG   = color.RGBA{100, 200, 100, 255}
-	colorTrajectory = color.RGBA{255, 255, 255, 200}
 )
 
 // Game implements ebiten.Game interface
@@ -157,12 +157,12 @@ func NewGame(cfg *config.GameConfig, stageCfg *config.StageConfig, stage *entity
 	return game
 }
 
-// Update proceeds the game state
-func (g *Game) Update() error {
+// Update proceeds the game state (implements scene.Scene)
+func (g *Game) Update(_ float64) (scene.Scene, error) {
 	// Handle hitstop
 	if g.hitstopFrames > 0 {
 		g.hitstopFrames--
-		return nil
+		return nil, nil
 	}
 
 	switch g.state {
@@ -178,7 +178,7 @@ func (g *Game) Update() error {
 		}
 	}
 
-	return nil
+	return nil, nil // nil = stay on this scene
 }
 
 func (g *Game) updatePlaying() {
@@ -675,9 +675,19 @@ func (g *Game) drawArrowIcon(screen *ebiten.Image, x, y float64, arrowType entit
 	ebitenutil.DrawRect(screen, tipX-1, tipY-1, 2, 2, c)
 }
 
-// Layout returns the game's screen dimensions
+// Layout returns the game's screen dimensions (used by game.Game)
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	return g.screenW, g.screenH
+}
+
+// OnEnter is called when entering this scene (implements scene.Scene)
+func (g *Game) OnEnter() {
+	// Scene is already initialized in NewGame
+}
+
+// OnExit is called when leaving this scene (implements scene.Scene)
+func (g *Game) OnExit() {
+	g.saveRecording()
 }
 
 func (g *Game) drawTrajectory(screen *ebiten.Image, camX, camY int) {
@@ -793,17 +803,21 @@ func main() {
 	}
 	stage := system.LoadStage(stageCfg)
 
-	// Create game
-	game := NewGame(cfg, stageCfg, stage, recordFilename)
+	// Create initial scene (Playing)
+	playingScene := NewGame(cfg, stageCfg, stage, recordFilename)
+
+	// Create game manager with scene
+	screenW := cfg.Physics.Display.ScreenWidth
+	screenH := cfg.Physics.Display.ScreenHeight
+	gameManager := game.New(playingScene, screenW, screenH)
 
 	// Set up ebiten
-	ebiten.SetWindowSize(cfg.Physics.Display.ScreenWidth*cfg.Physics.Display.Scale,
-		cfg.Physics.Display.ScreenHeight*cfg.Physics.Display.Scale)
+	ebiten.SetWindowSize(screenW*cfg.Physics.Display.Scale, screenH*cfg.Physics.Display.Scale)
 	ebiten.SetWindowTitle("Platform Action Game")
 	ebiten.SetTPS(cfg.Physics.Display.Framerate)
 
 	// Run game
-	if err := ebiten.RunGame(game); err != nil {
+	if err := ebiten.RunGame(gameManager); err != nil {
 		log.Fatal(err)
 	}
 }
