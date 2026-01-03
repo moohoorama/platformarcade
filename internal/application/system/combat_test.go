@@ -311,21 +311,21 @@ func TestCombatSystem_UpdateProjectiles(t *testing.T) {
 		assert.Greater(t, sys.projectiles[0].X, initialX)
 	})
 
-	t.Run("deactivates out of range projectiles", func(t *testing.T) {
+	t.Run("projectile continues beyond max range", func(t *testing.T) {
 		sys.projectiles = nil
 		sys.SpawnPlayerArrow(32, 32, true)
 		proj := sys.projectiles[0]
 		proj.MaxRange = 10
 
-		// Move projectile far
+		// Move projectile far - should still be active
 		for i := 0; i < 10; i++ {
 			sys.updateProjectiles(0.1)
 		}
 
-		assert.False(t, proj.Active)
+		assert.True(t, proj.Active)
 	})
 
-	t.Run("deactivates projectiles hitting walls", func(t *testing.T) {
+	t.Run("sticks projectiles hitting walls", func(t *testing.T) {
 		sys.projectiles = nil
 		sys.SpawnPlayerArrow(50, 32, true) // Near right wall
 		proj := sys.projectiles[0]
@@ -334,7 +334,9 @@ func TestCombatSystem_UpdateProjectiles(t *testing.T) {
 			sys.updateProjectiles(0.016)
 		}
 
-		assert.False(t, proj.Active)
+		assert.True(t, proj.Stuck)
+		assert.True(t, proj.Active)
+		assert.Equal(t, 5.0, proj.StuckDuration)
 	})
 }
 

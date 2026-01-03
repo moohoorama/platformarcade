@@ -51,6 +51,30 @@ func (s *CombatSystem) SpawnPlayerArrow(x, y float64, facingRight bool) {
 	s.projectiles = append(s.projectiles, arrow)
 }
 
+// SpawnPlayerArrowToward spawns an arrow toward a target position
+func (s *CombatSystem) SpawnPlayerArrowToward(x, y, targetX, targetY float64) {
+	arrowCfg := s.config.Entities.Projectiles["playerArrow"]
+
+	arrow := entity.NewArrowDirected(
+		x, y,
+		targetX, targetY,
+		arrowCfg.Physics.Speed,
+		arrowCfg.Physics.GravityAccel,
+		arrowCfg.Physics.MaxFallSpeed,
+		arrowCfg.Physics.MaxRange,
+		arrowCfg.Damage,
+		true, // isPlayer
+	)
+
+	s.projectiles = append(s.projectiles, arrow)
+}
+
+// GetArrowConfig returns the player arrow configuration
+func (s *CombatSystem) GetArrowConfig() (speed, gravity, maxFall, maxRange float64) {
+	arrowCfg := s.config.Entities.Projectiles["playerArrow"]
+	return arrowCfg.Physics.Speed, arrowCfg.Physics.GravityAccel, arrowCfg.Physics.MaxFallSpeed, arrowCfg.Physics.MaxRange
+}
+
 // SpawnEnemy spawns an enemy at the given position
 func (s *CombatSystem) SpawnEnemy(id entity.EntityID, x, y int, enemyType string, facingRight bool) {
 	enemyCfg, ok := s.config.Entities.Enemies[enemyType]
@@ -106,10 +130,11 @@ func (s *CombatSystem) updateProjectiles(dt float64) {
 
 		proj.Update(dt)
 
-		// Check wall collision
-		px, py, _, _ := proj.GetHitbox()
-		if s.stage.IsSolidAt(px, py) {
-			proj.Deactivate()
+		// Check wall collision at arrow tip (only if not already stuck)
+		if !proj.Stuck {
+			if s.stage.IsSolidAt(int(proj.X), int(proj.Y)) {
+				proj.StickToWall(5.0)
+			}
 		}
 	}
 }

@@ -54,15 +54,53 @@ func TestProjectile_Update(t *testing.T) {
 	assert.Greater(t, math.Abs(arrow.X-arrow.StartX), 0.0)
 }
 
-func TestProjectile_Update_ExceedsRange(t *testing.T) {
-	arrow := NewArrow(100, 200, true, 300, 0, 500, 350, 10, 25, true) // Very short range
+func TestProjectile_StickToWall(t *testing.T) {
+	arrow := NewArrow(100, 200, true, 300, 20, 500, 350, 180, 25, true)
 
-	// Update until it exceeds range
-	for i := 0; i < 10; i++ {
-		arrow.Update(0.016)
-	}
+	// Stick to wall
+	arrow.StickToWall(5.0)
 
+	assert.True(t, arrow.Stuck)
+	assert.Equal(t, 5.0, arrow.StuckDuration)
+	assert.Equal(t, 0.0, arrow.StuckTimer)
+	assert.Equal(t, 0.0, arrow.VX)
+	assert.Equal(t, 0.0, arrow.VY)
+	assert.True(t, arrow.Active)
+
+	// Update should increment stuck timer
+	arrow.Update(1.0)
+	assert.Equal(t, 1.0, arrow.StuckTimer)
+	assert.True(t, arrow.Active)
+
+	// After 5 seconds, should deactivate
+	arrow.Update(4.0)
 	assert.False(t, arrow.Active)
+}
+
+func TestProjectile_GetAlpha(t *testing.T) {
+	arrow := NewArrow(100, 200, true, 300, 0, 500, 350, 180, 25, true)
+
+	// Not stuck - full alpha
+	assert.Equal(t, 1.0, arrow.GetAlpha())
+
+	// Stuck - full alpha for first 4 seconds
+	arrow.StickToWall(5.0)
+	assert.Equal(t, 1.0, arrow.GetAlpha())
+
+	arrow.StuckTimer = 3.0
+	assert.Equal(t, 1.0, arrow.GetAlpha())
+
+	// Fade starts at 4 seconds
+	arrow.StuckTimer = 4.0
+	assert.Equal(t, 1.0, arrow.GetAlpha())
+
+	// Half way through fade
+	arrow.StuckTimer = 4.5
+	assert.InDelta(t, 0.5, arrow.GetAlpha(), 0.01)
+
+	// Almost gone
+	arrow.StuckTimer = 4.9
+	assert.InDelta(t, 0.1, arrow.GetAlpha(), 0.01)
 }
 
 func TestProjectile_Update_MaxFallSpeed(t *testing.T) {

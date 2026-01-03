@@ -28,20 +28,27 @@ type InputState struct {
 	JumpReleased bool
 	Attack       bool
 	Dash         bool
+	MouseX       int
+	MouseY       int
+	MouseClick   bool
 }
 
 // GetInput reads the current input state
 func (s *InputSystem) GetInput() InputState {
+	mx, my := ebiten.CursorPosition()
 	return InputState{
-		Left:         ebiten.IsKeyPressed(ebiten.KeyLeft) || ebiten.IsKeyPressed(ebiten.KeyA),
-		Right:        ebiten.IsKeyPressed(ebiten.KeyRight) || ebiten.IsKeyPressed(ebiten.KeyD),
-		Up:           ebiten.IsKeyPressed(ebiten.KeyUp) || ebiten.IsKeyPressed(ebiten.KeyW),
-		Down:         ebiten.IsKeyPressed(ebiten.KeyDown) || ebiten.IsKeyPressed(ebiten.KeyS),
-		Jump:         ebiten.IsKeyPressed(ebiten.KeyZ) || ebiten.IsKeyPressed(ebiten.KeySpace),
-		JumpPressed:  inpututil.IsKeyJustPressed(ebiten.KeyZ) || inpututil.IsKeyJustPressed(ebiten.KeySpace),
-		JumpReleased: inpututil.IsKeyJustReleased(ebiten.KeyZ) || inpututil.IsKeyJustReleased(ebiten.KeySpace),
-		Attack:       inpututil.IsKeyJustPressed(ebiten.KeyX),
-		Dash:         inpututil.IsKeyJustPressed(ebiten.KeyC),
+		Left:         ebiten.IsKeyPressed(ebiten.KeyA),
+		Right:        ebiten.IsKeyPressed(ebiten.KeyD),
+		Up:           ebiten.IsKeyPressed(ebiten.KeyW),
+		Down:         ebiten.IsKeyPressed(ebiten.KeyS),
+		Jump:         ebiten.IsKeyPressed(ebiten.KeyW),
+		JumpPressed:  inpututil.IsKeyJustPressed(ebiten.KeyW),
+		JumpReleased: inpututil.IsKeyJustReleased(ebiten.KeyW),
+		Attack:       false,
+		Dash:         inpututil.IsKeyJustPressed(ebiten.KeySpace),
+		MouseX:       mx,
+		MouseY:       my,
+		MouseClick:   inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft),
 	}
 }
 
@@ -120,9 +127,11 @@ func (s *InputSystem) handleMovement(player *entity.Player, input InputState) {
 
 	if input.Left {
 		targetVX = -maxSpeed
+		player.FacingRight = false
 	}
 	if input.Right {
 		targetVX = maxSpeed
+		player.FacingRight = true
 	}
 
 	// Air control

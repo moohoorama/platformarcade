@@ -30,6 +30,7 @@ var (
 	colorGold       = color.RGBA{255, 215, 0, 255}
 	colorHealthBG   = color.RGBA{60, 60, 60, 255}
 	colorHealthFG   = color.RGBA{100, 200, 100, 255}
+	colorTrajectory = color.RGBA{255, 255, 255, 200}
 )
 
 // Game implements ebiten.Game interface
@@ -52,6 +53,10 @@ type Game struct {
 	screenShakeX  float64
 	screenShakeY  float64
 	shakeDecay    float64
+
+	// Mouse aiming
+	mouseWorldX float64
+	mouseWorldY float64
 }
 
 // NewGame creates a new game instance
@@ -151,11 +156,33 @@ func (g *Game) updatePlaying() {
 	// Get input
 	input := g.inputSystem.GetInput()
 
-	// Handle attack
-	if input.Attack {
+	// Calculate camera offset for mouse world position
+	camX := g.player.X - g.screenW/2 + 8
+	camY := g.player.Y - g.screenH/2 + 12
+	if camX < 0 {
+		camX = 0
+	}
+	if camY < 0 {
+		camY = 0
+	}
+	maxCamX := g.stage.Width*g.tileSize - g.screenW
+	maxCamY := g.stage.Height*g.tileSize - g.screenH
+	if camX > maxCamX {
+		camX = maxCamX
+	}
+	if camY > maxCamY {
+		camY = maxCamY
+	}
+
+	// Convert mouse screen position to world position
+	g.mouseWorldX = float64(input.MouseX + camX)
+	g.mouseWorldY = float64(input.MouseY + camY)
+
+	// Handle attack (mouse click)
+	if input.MouseClick {
 		arrowX := float64(g.player.X + 8)
 		arrowY := float64(g.player.Y + 10)
-		g.combatSystem.SpawnPlayerArrow(arrowX, arrowY, g.player.FacingRight)
+		g.combatSystem.SpawnPlayerArrowToward(arrowX, arrowY, g.mouseWorldX, g.mouseWorldY)
 	}
 
 	// Update player with input
@@ -262,6 +289,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	g.drawEnemies(screen, camX, camY)
 	g.drawProjectiles(screen, camX, camY)
 	g.drawPlayer(screen, camX, camY)
+	g.drawTrajectory(screen, camX, camY)
 
 	// Draw UI
 	g.drawUI(screen)
@@ -365,14 +393,23 @@ func (g *Game) drawProjectiles(screen *ebiten.Image, camX, camY int) {
 			c = colorEnemyArrow
 		}
 
-		// Draw rotated arrow (simple line for now)
+		// Apply alpha for fading (pre-multiplied alpha)
+		alpha := proj.GetAlpha()
+		c = color.RGBA{
+			uint8(float64(c.R) * alpha),
+			uint8(float64(c.G) * alpha),
+			uint8(float64(c.B) * alpha),
+			uint8(float64(c.A) * alpha),
+		}
+
+		// Draw rotated arrow: p.X, p.Y is the arrow tip
 		rot := proj.Rotation()
 		length := 12.0
-		endX := x + math.Cos(rot)*length
-		endY := y + math.Sin(rot)*length
+		prevX := x - math.Cos(rot)*length
+		prevY := y - math.Sin(rot)*length
 
-		ebitenutil.DrawLine(screen, x, y, endX, endY, c)
-		ebitenutil.DrawRect(screen, endX-2, endY-2, 4, 4, c)
+		ebitenutil.DrawRect(screen, x-2, y-2, 4, 4, c)
+		ebitenutil.DrawLine(screen, x, y, prevX, prevY, c)
 	}
 }
 
@@ -411,7 +448,7 @@ func (g *Game) drawUI(screen *ebiten.Image) {
 	ebitenutil.DebugPrintAt(screen, goldText, 10, g.screenH-35)
 
 	// Controls
-	debugText := "Arrow/WASD: Move | Z: Jump | X: Attack | C: Dash | Tab: Hitbox | ESC: Pause"
+	debugText := "A/D: Move | W: Jump | Space: Dash | LClick: Attack | Tab: Hitbox | ESC: Pause"
 	ebitenutil.DebugPrint(screen, debugText)
 }
 
@@ -435,6 +472,67 @@ func (g *Game) drawGameOverOverlay(screen *ebiten.Image) {
 // Layout returns the game's screen dimensions
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	return g.screenW, g.screenH
+}
+
+func (g *Game) drawTrajectory(screen *ebiten.Image, camX, camY int) {
+	// Get arrow physics config
+	speed, gravity, maxFall, maxRange := g.combatSystem.GetArrowConfig()
+
+	// Arrow start position
+	startX := float64(g.player.X + 8)
+	startY := float64(g.player.Y + 10)
+
+	// Calculate initial velocity toward mouse
+	dx := g.mouseWorldX - startX
+	dy := g.mouseWorldY - startY
+	dist := math.Sqrt(dx*dx + dy*dy)
+	if dist < 1 {
+		dist = 1
+	}
+	vx := (dx / dist) * speed
+	vy := (dy / dist) * speed
+
+	// Simulate trajectory
+	x, y := startX, startY
+	dt := 1.0 / 60.0
+	dotSpacing := 8.0
+	accumulated := 0.0
+	dotSize := 3.0
+
+	for traveled := 0.0; traveled < maxRange; {
+		// Apply gravity
+		vy += gravity * dt
+		if vy > maxFall {
+			vy = maxFall
+		}
+
+		// Previous position
+		prevX, prevY := x, y
+
+		// Move
+		x += vx * dt
+		y += vy * dt
+
+		// Calculate distance moved this step
+		stepDx := x - prevX
+		stepDy := y - prevY
+		stepDist := math.Sqrt(stepDx*stepDx + stepDy*stepDy)
+		traveled += stepDist
+		accumulated += stepDist
+
+		// Check wall collision
+		if g.stage.IsSolidAt(int(x), int(y)) {
+			break
+		}
+
+		// Draw dot at intervals
+		if accumulated >= dotSpacing {
+			accumulated -= dotSpacing
+			screenX := x - float64(camX) - dotSize/2
+			screenY := y - float64(camY) - dotSize/2
+			ebitenutil.DrawRect(screen, screenX, screenY, dotSize, dotSize, colorTrajectory)
+		}
+	}
 }
 
 var randState uint32 = 1

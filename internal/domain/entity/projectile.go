@@ -21,6 +21,12 @@ type Projectile struct {
 	HitboxOffsetY int
 	HitboxWidth   int
 	HitboxHeight  int
+
+	// Stuck state (when hitting wall)
+	Stuck         bool
+	StuckTimer    float64
+	StuckDuration float64
+	StuckRotation float64
 }
 
 // NewArrow creates a new arrow projectile
@@ -50,9 +56,49 @@ func NewArrow(x, y float64, facingRight bool, speed, launchAngleDeg, gravityAcce
 	}
 }
 
+// NewArrowDirected creates a new arrow projectile toward a target direction
+func NewArrowDirected(x, y, targetX, targetY, speed, gravityAccel, maxFallSpeed, maxRange float64, damage int, isPlayer bool) *Projectile {
+	dx := targetX - x
+	dy := targetY - y
+	dist := math.Sqrt(dx*dx + dy*dy)
+	if dist < 1 {
+		dist = 1
+	}
+
+	vx := (dx / dist) * speed
+	vy := (dy / dist) * speed
+
+	return &Projectile{
+		X:             x,
+		Y:             y,
+		VX:            vx,
+		VY:            vy,
+		StartX:        x,
+		Active:        true,
+		IsPlayer:      isPlayer,
+		GravityAccel:  gravityAccel,
+		MaxFallSpeed:  maxFallSpeed,
+		MaxRange:      maxRange,
+		Damage:        damage,
+		HitboxOffsetX: 2,
+		HitboxOffsetY: 2,
+		HitboxWidth:   12,
+		HitboxHeight:  4,
+	}
+}
+
 // Update updates the projectile physics
 func (p *Projectile) Update(dt float64) {
 	if !p.Active {
+		return
+	}
+
+	// Handle stuck state
+	if p.Stuck {
+		p.StuckTimer += dt
+		if p.StuckTimer >= p.StuckDuration {
+			p.Active = false
+		}
 		return
 	}
 
@@ -67,15 +113,35 @@ func (p *Projectile) Update(dt float64) {
 	// Update position
 	p.X += p.VX * dt
 	p.Y += p.VY * dt
+}
 
-	// Check range
-	if math.Abs(p.X-p.StartX) > p.MaxRange {
-		p.Active = false
+// StickToWall makes the projectile stick to a wall
+func (p *Projectile) StickToWall(duration float64) {
+	p.StuckRotation = math.Atan2(p.VY, p.VX) // Save rotation before clearing velocity
+	p.Stuck = true
+	p.StuckTimer = 0
+	p.StuckDuration = duration
+	p.VX = 0
+	p.VY = 0
+}
+
+// GetAlpha returns the alpha value (0-1) for rendering, fading in last second
+func (p *Projectile) GetAlpha() float64 {
+	if !p.Stuck {
+		return 1.0
 	}
+	fadeStart := p.StuckDuration - 1.0
+	if p.StuckTimer < fadeStart {
+		return 1.0
+	}
+	return 1.0 - (p.StuckTimer-fadeStart)/1.0
 }
 
 // Rotation returns the rotation angle based on velocity vector
 func (p *Projectile) Rotation() float64 {
+	if p.Stuck {
+		return p.StuckRotation
+	}
 	return math.Atan2(p.VY, p.VX)
 }
 
