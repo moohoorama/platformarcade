@@ -57,6 +57,10 @@ type Game struct {
 	// Mouse aiming
 	mouseWorldX float64
 	mouseWorldY float64
+
+	// Arrow selection UI
+	arrowSelectUI    *entity.ArrowSelectUI
+	frameSkipCounter int
 }
 
 // NewGame creates a new game instance
@@ -89,6 +93,13 @@ func NewGame(cfg *config.GameConfig, stageCfg *config.StageConfig, stage *entity
 	// Create combat system
 	combatSystem := system.NewCombatSystem(cfg, stage)
 
+	// Create arrow select UI with config
+	arrowSelectCfg := entity.ArrowSelectConfig{
+		Radius:      cfg.Physics.ArrowSelect.Radius,
+		MinDistance: cfg.Physics.ArrowSelect.MinDistance,
+		MaxFrame:    cfg.Physics.ArrowSelect.MaxFrame,
+	}
+
 	game := &Game{
 		config:        cfg,
 		stageCfg:      stageCfg,
@@ -103,6 +114,7 @@ func NewGame(cfg *config.GameConfig, stageCfg *config.StageConfig, stage *entity
 		tileSize:      stage.TileSize,
 		dt:            1.0 / float64(cfg.Physics.Display.Framerate),
 		shakeDecay:    cfg.Physics.Feedback.ScreenShake.Decay,
+		arrowSelectUI: entity.NewArrowSelectUIWithConfig(arrowSelectCfg),
 	}
 
 	// Set up combat callbacks
@@ -156,6 +168,31 @@ func (g *Game) updatePlaying() {
 	// Get input
 	input := g.inputSystem.GetInput()
 
+	// Update arrow selection UI (always, for animation)
+	g.arrowSelectUI.Update(input.RightClickPressed, input.RightClickReleased, input.MouseX, input.MouseY, g.screenW, g.screenH)
+
+	// Update highlight based on mouse position
+	if g.arrowSelectUI.IsActive() {
+		selectedDir := g.arrowSelectUI.UpdateHighlight(input.MouseX, input.MouseY)
+
+		// On right click release, confirm selection
+		if input.RightClickReleased && selectedDir != entity.DirNone {
+			g.player.CurrentArrow = g.player.EquippedArrows[int(selectedDir)]
+		}
+	}
+
+	// Game speed slowdown when arrow selection UI is active
+	if g.arrowSelectUI.IsActive() {
+		g.frameSkipCounter++
+		if g.frameSkipCounter < 10 {
+			// Only update screen shake decay during slowdown
+			g.screenShakeX *= g.shakeDecay
+			g.screenShakeY *= g.shakeDecay
+			return
+		}
+		g.frameSkipCounter = 0
+	}
+
 	// Calculate camera offset for mouse world position
 	camX := g.player.X - g.screenW/2 + 8
 	camY := g.player.Y - g.screenH/2 + 12
@@ -178,8 +215,8 @@ func (g *Game) updatePlaying() {
 	g.mouseWorldX = float64(input.MouseX + camX)
 	g.mouseWorldY = float64(input.MouseY + camY)
 
-	// Handle attack (mouse click)
-	if input.MouseClick {
+	// Handle attack (mouse click) - only when arrow selection UI is not active
+	if input.MouseClick && !g.arrowSelectUI.IsActive() {
 		arrowX := float64(g.player.X + 8)
 		arrowY := float64(g.player.Y + 10)
 		g.combatSystem.SpawnPlayerArrowToward(arrowX, arrowY, g.mouseWorldX, g.mouseWorldY)
@@ -238,7 +275,15 @@ func (g *Game) restart() {
 	g.player.Health = g.player.MaxHealth
 	g.player.Gold = 0
 	g.player.IframeTimer = 1.0
+	g.player.CurrentArrow = entity.ArrowGray
 	g.state = state.StatePlaying
+
+	// Reset UI with config
+	g.arrowSelectUI = entity.NewArrowSelectUIWithConfig(entity.ArrowSelectConfig{
+		Radius:      g.config.Physics.ArrowSelect.Radius,
+		MinDistance: g.config.Physics.ArrowSelect.MinDistance,
+		MaxFrame:    g.config.Physics.ArrowSelect.MaxFrame,
+	})
 
 	// Respawn enemies
 	g.combatSystem = system.NewCombatSystem(g.config, g.stage)
@@ -291,7 +336,17 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	g.drawPlayer(screen, camX, camY)
 	g.drawTrajectory(screen, camX, camY)
 
-	// Draw UI
+	// Draw dark overlay when arrow selection UI is active
+	if g.arrowSelectUI.IsActive() {
+		g.drawArrowSelectOverlay(screen)
+	}
+
+	// Draw arrow selection UI
+	if g.arrowSelectUI.IsActive() {
+		g.drawArrowSelectUI(screen)
+	}
+
+	// Draw UI (HP bar, current arrow, etc.) - always on top
 	g.drawUI(screen)
 
 	// Draw state overlays
@@ -388,8 +443,11 @@ func (g *Game) drawProjectiles(screen *ebiten.Image, camX, camY int) {
 		x := proj.X - float64(camX)
 		y := proj.Y - float64(camY)
 
-		c := colorArrow
-		if !proj.IsPlayer {
+		// Use current arrow color for player projectiles
+		var c color.RGBA
+		if proj.IsPlayer {
+			c = entity.ArrowColors[g.player.CurrentArrow]
+		} else {
 			c = colorEnemyArrow
 		}
 
@@ -443,12 +501,15 @@ func (g *Game) drawUI(screen *ebiten.Image) {
 	}
 	ebitenutil.DrawRect(screen, barX, barY, barW*healthRatio, barH, colorHealthFG)
 
+	// Current arrow indicator (right side of HP bar)
+	g.drawArrowIcon(screen, barX+barW+10, barY+barH/2, g.player.CurrentArrow, 1.0, true)
+
 	// Gold
 	goldText := fmt.Sprintf("Gold: %d", g.player.Gold)
 	ebitenutil.DebugPrintAt(screen, goldText, 10, g.screenH-35)
 
 	// Controls
-	debugText := "A/D: Move | W: Jump | Space: Dash | LClick: Attack | Tab: Hitbox | ESC: Pause"
+	debugText := "A/D: Move | W: Jump | Space: Dash | LClick: Attack | RClick: Arrow Select | ESC: Pause"
 	ebitenutil.DebugPrint(screen, debugText)
 }
 
@@ -467,6 +528,86 @@ func (g *Game) drawGameOverOverlay(screen *ebiten.Image) {
 
 	text := fmt.Sprintf("GAME OVER\n\nGold collected: %d\n\nPress Z to restart", g.player.Gold)
 	ebitenutil.DebugPrintAt(screen, text, g.screenW/2-60, g.screenH/2-30)
+}
+
+// drawArrowSelectOverlay draws the dark overlay for arrow selection
+func (g *Game) drawArrowSelectOverlay(screen *ebiten.Image) {
+	progress := g.arrowSelectUI.GetProgress()
+	easedProgress := math.Sin(progress * math.Pi / 2) // sin easing
+
+	// Darken based on progress (max 50% opacity)
+	alpha := uint8(128 * easedProgress)
+	overlay := color.RGBA{0, 0, 0, alpha}
+	ebitenutil.DrawRect(screen, 0, 0, float64(g.screenW), float64(g.screenH), overlay)
+}
+
+// drawArrowSelectUI draws the radial arrow selection menu
+func (g *Game) drawArrowSelectUI(screen *ebiten.Image) {
+	progress := g.arrowSelectUI.GetProgress()
+	easedProgress := math.Sin(progress * math.Pi / 2) // sin easing
+
+	// Draw each arrow icon in the 4 directions
+	for dir := entity.DirRight; dir <= entity.DirDown; dir++ {
+		arrowType := g.player.EquippedArrows[int(dir)]
+		x, y := g.arrowSelectUI.GetIconPosition(dir, easedProgress)
+
+		// Determine brightness
+		// Selected (current) arrow = 100%, unselected = 70%, highlighted = 100%
+		brightness := 0.7
+		if arrowType == g.player.CurrentArrow {
+			brightness = 1.0
+		}
+		if dir == g.arrowSelectUI.Highlighted {
+			brightness = 1.0
+		}
+
+		// Determine scale (highlighted = larger)
+		scale := 1.0
+		if dir == g.arrowSelectUI.Highlighted {
+			scale = 1.3
+		}
+
+		g.drawArrowIcon(screen, x, y, arrowType, brightness*easedProgress, scale > 1.0)
+	}
+}
+
+// drawArrowIcon draws an arrow icon (line with tip) at the given position
+func (g *Game) drawArrowIcon(screen *ebiten.Image, x, y float64, arrowType entity.ArrowType, brightness float64, large bool) {
+	baseColor := entity.ArrowColors[arrowType]
+
+	// Apply brightness (and alpha based on easedProgress for animation)
+	c := color.RGBA{
+		uint8(float64(baseColor.R) * brightness),
+		uint8(float64(baseColor.G) * brightness),
+		uint8(float64(baseColor.B) * brightness),
+		uint8(float64(baseColor.A) * brightness),
+	}
+
+	// Arrow dimensions
+	length := 12.0
+	if large {
+		length = 16.0
+	}
+
+	// Arrow pointing right (0 degrees)
+	tipX := x + length/2
+	tipY := y
+	tailX := x - length/2
+	tailY := y
+
+	// Draw arrow line
+	ebitenutil.DrawLine(screen, tailX, tailY, tipX, tipY, c)
+
+	// Draw arrow tip (small triangle approximated with lines)
+	tipSize := 4.0
+	if large {
+		tipSize = 5.0
+	}
+	ebitenutil.DrawLine(screen, tipX, tipY, tipX-tipSize, tipY-tipSize/2, c)
+	ebitenutil.DrawLine(screen, tipX, tipY, tipX-tipSize, tipY+tipSize/2, c)
+
+	// Draw small square at tip for visibility
+	ebitenutil.DrawRect(screen, tipX-1, tipY-1, 2, 2, c)
 }
 
 // Layout returns the game's screen dimensions
@@ -491,6 +632,15 @@ func (g *Game) drawTrajectory(screen *ebiten.Image, camX, camY int) {
 	}
 	vx := (dx / dist) * speed
 	vy := (dy / dist) * speed
+
+	// Trajectory color - white with slight tint of current arrow color
+	arrowColor := entity.ArrowColors[g.player.CurrentArrow]
+	trajectoryColor := color.RGBA{
+		uint8((int(arrowColor.R) + 255) / 2),
+		uint8((int(arrowColor.G) + 255) / 2),
+		uint8((int(arrowColor.B) + 255) / 2),
+		200,
+	}
 
 	// Simulate trajectory
 	x, y := startX, startY
@@ -530,7 +680,7 @@ func (g *Game) drawTrajectory(screen *ebiten.Image, camX, camY int) {
 			accumulated -= dotSpacing
 			screenX := x - float64(camX) - dotSize/2
 			screenY := y - float64(camY) - dotSize/2
-			ebitenutil.DrawRect(screen, screenX, screenY, dotSize, dotSize, colorTrajectory)
+			ebitenutil.DrawRect(screen, screenX, screenY, dotSize, dotSize, trajectoryColor)
 		}
 	}
 }

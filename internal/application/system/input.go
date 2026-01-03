@@ -31,24 +31,29 @@ type InputState struct {
 	MouseX       int
 	MouseY       int
 	MouseClick   bool
+	// Right click for arrow selection
+	RightClickPressed  bool
+	RightClickReleased bool
 }
 
 // GetInput reads the current input state
 func (s *InputSystem) GetInput() InputState {
 	mx, my := ebiten.CursorPosition()
 	return InputState{
-		Left:         ebiten.IsKeyPressed(ebiten.KeyA),
-		Right:        ebiten.IsKeyPressed(ebiten.KeyD),
-		Up:           ebiten.IsKeyPressed(ebiten.KeyW),
-		Down:         ebiten.IsKeyPressed(ebiten.KeyS),
-		Jump:         ebiten.IsKeyPressed(ebiten.KeyW),
-		JumpPressed:  inpututil.IsKeyJustPressed(ebiten.KeyW),
-		JumpReleased: inpututil.IsKeyJustReleased(ebiten.KeyW),
-		Attack:       false,
-		Dash:         inpututil.IsKeyJustPressed(ebiten.KeySpace),
-		MouseX:       mx,
-		MouseY:       my,
-		MouseClick:   inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft),
+		Left:               ebiten.IsKeyPressed(ebiten.KeyA),
+		Right:              ebiten.IsKeyPressed(ebiten.KeyD),
+		Up:                 ebiten.IsKeyPressed(ebiten.KeyW),
+		Down:               ebiten.IsKeyPressed(ebiten.KeyS),
+		Jump:               ebiten.IsKeyPressed(ebiten.KeyW),
+		JumpPressed:        inpututil.IsKeyJustPressed(ebiten.KeyW),
+		JumpReleased:       inpututil.IsKeyJustReleased(ebiten.KeyW),
+		Attack:             false,
+		Dash:               inpututil.IsKeyJustPressed(ebiten.KeySpace),
+		MouseX:             mx,
+		MouseY:             my,
+		MouseClick:         inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft),
+		RightClickPressed:  inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight),
+		RightClickReleased: inpututil.IsMouseButtonJustReleased(ebiten.MouseButtonRight),
 	}
 }
 

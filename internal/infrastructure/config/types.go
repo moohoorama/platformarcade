@@ -2,14 +2,22 @@ package config
 
 // PhysicsConfig is the root config for physics.json
 type PhysicsConfig struct {
-	Display   DisplayConfig   `json:"display"`
-	Physics   PhysicsSettings `json:"physics"`
-	Movement  MovementConfig  `json:"movement"`
-	Jump      JumpConfig      `json:"jump"`
-	Dash      DashConfig      `json:"dash"`
-	Collision CollisionConfig `json:"collision"`
-	Combat    CombatConfig    `json:"combat"`
-	Feedback  FeedbackConfig  `json:"feedback"`
+	Display     DisplayConfig     `json:"display"`
+	Physics     PhysicsSettings   `json:"physics"`
+	Movement    MovementConfig    `json:"movement"`
+	Jump        JumpConfig        `json:"jump"`
+	Dash        DashConfig        `json:"dash"`
+	Collision   CollisionConfig   `json:"collision"`
+	Combat      CombatConfig      `json:"combat"`
+	Feedback    FeedbackConfig    `json:"feedback"`
+	ArrowSelect ArrowSelectConfig `json:"arrowSelect"`
+}
+
+// ArrowSelectConfig configures the arrow selection UI
+type ArrowSelectConfig struct {
+	Radius      int `json:"radius"`      // Icon distance from center (pixels)
+	MinDistance int `json:"minDistance"` // Minimum distance for selection (pixels)
+	MaxFrame    int `json:"maxFrame"`    // Animation duration (frames)
 }
 
 type DisplayConfig struct {

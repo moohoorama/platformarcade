@@ -78,6 +78,10 @@ type Player struct {
 	Dashing    bool
 	Attacking  bool
 	CanDash    bool
+
+	// Arrow system
+	EquippedArrows [4]ArrowType // 장착된 화살 (방향별: 0=오른쪽, 1=위, 2=왼쪽, 3=아래)
+	CurrentArrow   ArrowType    // 현재 사용 중인 화살
 }
 
 // NewPlayer creates a new player with default values
@@ -92,6 +96,9 @@ func NewPlayer(x, y int, hitbox TrapezoidHitbox, maxHealth int) *Player {
 		Health:    maxHealth,
 		MaxHealth: maxHealth,
 		CanDash:   true,
+		// Default: all 4 arrow types equipped
+		EquippedArrows: [4]ArrowType{ArrowGray, ArrowRed, ArrowBlue, ArrowPurple},
+		CurrentArrow:   ArrowGray,
 	}
 }
 

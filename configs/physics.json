@@ -71,5 +71,10 @@
       "jumpStretch": {"x": 0.8, "y": 1.2},
       "duration": 0.1
     }
+  },
+  "arrowSelect": {
+    "radius": 32,
+    "minDistance": 16,
+    "maxFrame": 10
   }
 }
