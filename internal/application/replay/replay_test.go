@@ -6,7 +6,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/younwookim/mg/internal/application/system"
 )
 
 func TestFrameInput_JSONMarshal(t *testing.T) {
@@ -208,6 +207,3 @@ func TestReplayer_ReturnsCorrectInputState(t *testing.T) {
 	assert.True(t, input.RightClickPressed)
 	assert.True(t, input.RightClickReleased)
 }
-
-// Compile check: InputState must be from system package
-var _ system.InputState

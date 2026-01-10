@@ -5,9 +5,24 @@ import (
 	"fmt"
 	"os"
 	"time"
-
-	"github.com/younwookim/mg/internal/application/system"
 )
+
+// ReplayInput represents input state during replay
+type ReplayInput struct {
+	Left               bool
+	Right              bool
+	Up                 bool
+	Down               bool
+	Jump               bool
+	JumpPressed        bool
+	JumpReleased       bool
+	Dash               bool
+	MouseX             int
+	MouseY             int
+	MouseClick         bool
+	RightClickPressed  bool
+	RightClickReleased bool
+}
 
 // Replayer handles input playback from recorded data
 type Replayer struct {
@@ -41,15 +56,15 @@ func LoadReplay(filename string) (*ReplayData, error) {
 }
 
 // GetInput returns the input for the current frame and advances
-func (r *Replayer) GetInput() (system.InputState, bool) {
+func (r *Replayer) GetInput() (ReplayInput, bool) {
 	if r.frame >= len(r.data.Frames) {
-		return system.InputState{}, false
+		return ReplayInput{}, false
 	}
 
 	fi := r.data.Frames[r.frame]
 	r.frame++
 
-	return system.InputState{
+	return ReplayInput{
 		Left:               fi.L,
 		Right:              fi.R,
 		Up:                 fi.U,

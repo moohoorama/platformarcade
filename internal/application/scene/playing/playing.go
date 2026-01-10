@@ -14,8 +14,8 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/younwookim/mg/internal/application/scene"
 	"github.com/younwookim/mg/internal/application/state"
-	"github.com/younwookim/mg/internal/application/system"
 	"github.com/younwookim/mg/internal/domain/entity"
+	"github.com/younwookim/mg/internal/ecs"
 	"github.com/younwookim/mg/internal/infrastructure/config"
 )
 
@@ -36,18 +36,18 @@ var (
 
 // Playing is the main gameplay scene
 type Playing struct {
-	config        *config.GameConfig
-	stageCfg      *config.StageConfig
-	stage         *entity.Stage
-	state         state.GameState
-	player        *entity.Player
-	physicsSystem *system.PhysicsSystem
-	inputSystem   *system.InputSystem
-	combatSystem  *system.CombatSystem
-	screenW       int
-	screenH       int
-	tileSize      int
-	dt            float64
+	config   *config.GameConfig
+	stageCfg *config.StageConfig
+	stage    *entity.Stage
+	state    state.GameState
+	world    *ecs.World
+	screenW  int
+	screenH  int
+	tileSize int
+
+	// Physics config for ECS systems
+	physicsCfg ecs.PhysicsConfig
+	arrowCfg   ecs.ProjectileConfig
 
 	// Feedback
 	hitstopFrames int
@@ -59,7 +59,7 @@ type Playing struct {
 	mouseWorldX float64
 	mouseWorldY float64
 
-	// Arrow selection UI
+	// Arrow selection UI (keep entity package for UI)
 	arrowSelectUI *entity.ArrowSelectUI
 
 	// Deterministic RNG
@@ -72,7 +72,7 @@ type Playing struct {
 
 	// Enemy spawner
 	spawnTimer  int
-	nextEnemyID entity.EntityID
+	nextEnemyID ecs.EntityID
 }
 
 // New creates a new Playing scene.
@@ -82,22 +82,25 @@ func New(cfg *config.GameConfig, stageCfg *config.StageConfig, stage *entity.Sta
 	seed := time.Now().UnixNano()
 	rng := rand.New(rand.NewSource(seed))
 
+	// Create ECS world
+	world := ecs.NewWorld()
+
 	// Create player hitbox from config
 	playerCfg := cfg.Entities.Player
-	hitbox := entity.TrapezoidHitbox{
-		Head: entity.HitboxRect{
+	hitbox := ecs.HitboxTrapezoid{
+		Head: ecs.Hitbox{
 			OffsetX: playerCfg.Hitbox.Head.OffsetX,
 			OffsetY: playerCfg.Hitbox.Head.OffsetY,
 			Width:   playerCfg.Hitbox.Head.Width,
 			Height:  playerCfg.Hitbox.Head.Height,
 		},
-		Body: entity.HitboxRect{
+		Body: ecs.Hitbox{
 			OffsetX: playerCfg.Hitbox.Body.OffsetX,
 			OffsetY: playerCfg.Hitbox.Body.OffsetY,
 			Width:   playerCfg.Hitbox.Body.Width,
 			Height:  playerCfg.Hitbox.Body.Height,
 		},
-		Feet: entity.HitboxRect{
+		Feet: ecs.Hitbox{
 			OffsetX: playerCfg.Hitbox.Feet.OffsetX,
 			OffsetY: playerCfg.Hitbox.Feet.OffsetY,
 			Width:   playerCfg.Hitbox.Feet.Width,
@@ -105,10 +108,14 @@ func New(cfg *config.GameConfig, stageCfg *config.StageConfig, stage *entity.Sta
 		},
 	}
 
-	player := entity.NewPlayer(stage.SpawnX, stage.SpawnY, hitbox, playerCfg.Stats.MaxHealth)
+	// Create player entity
+	world.CreatePlayer(stage.SpawnX, stage.SpawnY, hitbox, playerCfg.Stats.MaxHealth)
 
-	// Create combat system with seeded RNG
-	combatSystem := system.NewCombatSystem(cfg, stage, rng)
+	// Build physics config for ECS
+	physicsCfg := buildPhysicsConfig(cfg)
+
+	// Build arrow config
+	arrowCfg := buildArrowConfig(cfg)
 
 	// Create arrow select UI with config
 	arrowSelectCfg := entity.ArrowSelectConfig{
@@ -122,14 +129,12 @@ func New(cfg *config.GameConfig, stageCfg *config.StageConfig, stage *entity.Sta
 		stageCfg:       stageCfg,
 		stage:          stage,
 		state:          state.StatePlaying,
-		player:         player,
-		physicsSystem:  system.NewPhysicsSystem(cfg.Physics, stage),
-		inputSystem:    system.NewInputSystem(cfg.Physics),
-		combatSystem:   combatSystem,
+		world:          world,
 		screenW:        cfg.Physics.Display.ScreenWidth,
 		screenH:        cfg.Physics.Display.ScreenHeight,
 		tileSize:       stage.TileSize,
-		dt:             1.0 / float64(cfg.Physics.Display.Framerate),
+		physicsCfg:     physicsCfg,
+		arrowCfg:       arrowCfg,
 		shakeDecay:     cfg.Physics.Feedback.ScreenShake.Decay,
 		arrowSelectUI:  entity.NewArrowSelectUIWithConfig(arrowSelectCfg),
 		rng:            rng,
@@ -143,24 +148,106 @@ func New(cfg *config.GameConfig, stageCfg *config.StageConfig, stage *entity.Sta
 		log.Printf("Recording enabled: %s (seed: %d)", recordPath, seed)
 	}
 
-	// Set up combat callbacks
-	combatSystem.OnHitstop = func(frames int) {
-		p.hitstopFrames = frames
-	}
-	combatSystem.OnScreenShake = func(intensity float64) {
-		p.screenShakeX = intensity
-		p.screenShakeY = intensity
-	}
-
 	// Spawn enemies from stage config
-	for i, spawn := range stageCfg.Enemies {
-		combatSystem.SpawnEnemy(entity.EntityID(i+1), spawn.X, spawn.Y, spawn.Type, spawn.FacingRight)
+	for _, spawn := range stageCfg.Enemies {
+		p.spawnEnemy(spawn.X, spawn.Y, spawn.Type, spawn.FacingRight)
 	}
 
 	// Initialize enemy ID counter for spawner
-	p.nextEnemyID = entity.EntityID(len(stageCfg.Enemies) + 1)
+	p.nextEnemyID = ecs.EntityID(len(stageCfg.Enemies) + 2) // +2 because player is ID 1
 
 	return p
+}
+
+func buildPhysicsConfig(cfg *config.GameConfig) ecs.PhysicsConfig {
+	return ecs.PhysicsConfig{
+		// Physics
+		// Gravity: acceleration (pixels/sec²) → IU velocity change per frame
+		Gravity:      ecs.ToIUAccelPerFrame(cfg.Physics.Physics.Gravity),
+		MaxFallSpeed: ecs.ToIUPerSubstep(cfg.Physics.Physics.MaxFallSpeed),
+
+		// Movement
+		MaxSpeed: ecs.ToIUPerSubstep(cfg.Physics.Movement.MaxSpeed),
+		// Acceleration/Deceleration: pixels/sec² → IU velocity change per frame
+		Acceleration:  ecs.ToIUAccelPerFrame(cfg.Physics.Movement.Acceleration),
+		Deceleration:  ecs.ToIUAccelPerFrame(cfg.Physics.Movement.Deceleration),
+		AirControlPct: ecs.PctToInt(cfg.Physics.Movement.AirControl),
+		TurnaroundPct: ecs.PctToInt(cfg.Physics.Movement.TurnaroundBoost),
+
+		// Jump
+		JumpForce:         ecs.ToIUPerSubstep(cfg.Physics.Jump.Force),
+		VarJumpPct:        ecs.PctToInt(cfg.Physics.Jump.VariableJumpMultiplier),
+		CoyoteFrames:      int(cfg.Physics.Jump.CoyoteTime * 60),
+		JumpBufferFrames:  int(cfg.Physics.Jump.JumpBuffer * 60),
+		ApexModEnabled:    cfg.Physics.Jump.ApexModifier.Enabled,
+		ApexThreshold:     ecs.ToIUPerSubstep(cfg.Physics.Jump.ApexModifier.Threshold),
+		ApexGravityPct:    ecs.PctToInt(cfg.Physics.Jump.ApexModifier.GravityMultiplier),
+		FallMultiplierPct: ecs.PctToInt(cfg.Physics.Jump.FallMultiplier),
+
+		// Dash
+		DashSpeed:          ecs.ToIUPerSubstep(cfg.Physics.Dash.Speed),
+		DashFrames:         int(cfg.Physics.Dash.Duration * 60),
+		DashCooldownFrames: int(cfg.Physics.Dash.Cooldown * 60),
+		DashIframes:        int(cfg.Physics.Dash.IframesDuration * 60),
+
+		// Collision
+		CornerCorrectionMargin:  cfg.Physics.Collision.CornerCorrection.Margin,
+		CornerCorrectionEnabled: cfg.Physics.Collision.CornerCorrection.Enabled,
+	}
+}
+
+func buildArrowConfig(cfg *config.GameConfig) ecs.ProjectileConfig {
+	arrowCfg := cfg.Entities.Projectiles["playerArrow"]
+	return ecs.ProjectileConfig{
+		GravityAccel:  ecs.ToIUAccelPerFrame(arrowCfg.Physics.GravityAccel),
+		MaxFallSpeed:  ecs.ToIUPerSubstep(arrowCfg.Physics.MaxFallSpeed),
+		MaxRange:      int(arrowCfg.Physics.MaxRange),
+		Damage:        arrowCfg.Damage,
+		HitboxOffsetX: 2,
+		HitboxOffsetY: 2,
+		HitboxWidth:   12,
+		HitboxHeight:  4,
+		StuckDuration: 300, // 5 seconds at 60fps
+	}
+}
+
+func (p *Playing) spawnEnemy(x, y int, enemyType string, facingRight bool) {
+	enemyCfg, ok := p.config.Entities.Enemies[enemyType]
+	if !ok {
+		return
+	}
+
+	aiType := ecs.AIPatrol
+	switch enemyCfg.AI.Type {
+	case "patrol":
+		aiType = ecs.AIPatrol
+	case "ranged":
+		aiType = ecs.AIRanged
+	case "chase":
+		aiType = ecs.AIChase
+	case "aggressive":
+		aiType = ecs.AIAggressive
+	}
+
+	ecsCfg := ecs.EnemyConfig{
+		MaxHealth:     enemyCfg.Stats.MaxHealth,
+		ContactDamage: enemyCfg.Stats.ContactDamage,
+		MoveSpeed:     ecs.ToIUPerSubstep(enemyCfg.Stats.MoveSpeed),
+		HitboxOffsetX: enemyCfg.Hitbox.Body.OffsetX,
+		HitboxOffsetY: enemyCfg.Hitbox.Body.OffsetY,
+		HitboxWidth:   enemyCfg.Hitbox.Body.Width,
+		HitboxHeight:  enemyCfg.Hitbox.Body.Height,
+		AIType:        aiType,
+		DetectRange:   int(enemyCfg.AI.DetectRange),
+		PatrolDist:    int(enemyCfg.AI.PatrolDistance),
+		AttackRange:   int(enemyCfg.AI.AttackRange),
+		JumpForce:     ecs.ToIUPerSubstep(enemyCfg.AI.JumpForce),
+		Flying:        enemyCfg.AI.Flying,
+		GoldDropMin:   enemyCfg.Stats.GoldDrop.Min,
+		GoldDropMax:   enemyCfg.Stats.GoldDrop.Max,
+	}
+
+	p.world.CreateEnemy(x, y, ecsCfg, facingRight)
 }
 
 // Update proceeds the game state (implements scene.Scene)
@@ -200,29 +287,226 @@ func (p *Playing) updatePlaying() {
 	}
 
 	// Get input
-	input := p.inputSystem.GetInput()
+	input := p.getInput()
 
 	// Record input if recording is enabled
 	if p.recorder != nil {
-		p.recorder.RecordFrame(input)
+		p.recorder.RecordFrame(RecordableInput{
+			Left:               input.Left,
+			Right:              input.Right,
+			Up:                 input.Up,
+			Down:               input.Down,
+			Jump:               input.Up, // W key is both up and jump
+			JumpPressed:        input.JumpPressed,
+			JumpReleased:       input.JumpReleased,
+			Dash:               input.Dash,
+			MouseX:             input.MouseX,
+			MouseY:             input.MouseY,
+			MouseClick:         inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft),
+			RightClickPressed:  inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight),
+			RightClickReleased: inpututil.IsMouseButtonJustReleased(ebiten.MouseButtonRight),
+		})
 	}
 
 	// Update arrow selection UI (always, for animation)
-	p.arrowSelectUI.Update(input.RightClickPressed, input.RightClickReleased, input.MouseX, input.MouseY, p.screenW, p.screenH)
+	p.arrowSelectUI.Update(
+		inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight),
+		inpututil.IsMouseButtonJustReleased(ebiten.MouseButtonRight),
+		input.MouseX, input.MouseY, p.screenW, p.screenH,
+	)
+
+	// Get player data for arrow selection
+	playerData := p.world.PlayerData[p.world.PlayerID]
 
 	// Update highlight based on mouse position
 	if p.arrowSelectUI.IsActive() {
 		selectedDir := p.arrowSelectUI.UpdateHighlight(input.MouseX, input.MouseY)
 
 		// On right click release, confirm selection
-		if input.RightClickReleased && selectedDir != entity.DirNone {
-			p.player.CurrentArrow = p.player.EquippedArrows[int(selectedDir)]
+		if inpututil.IsMouseButtonJustReleased(ebiten.MouseButtonRight) && selectedDir != entity.DirNone {
+			playerData.CurrentArrow = ecs.ArrowType(selectedDir)
+			p.world.PlayerData[p.world.PlayerID] = playerData
 		}
 	}
 
-	// Calculate camera offset for mouse world position (use pixel coordinates)
-	camX := p.player.PixelX() - p.screenW/2 + 8
-	camY := p.player.PixelY() - p.screenH/2 + 12
+	// Calculate camera offset for mouse world position
+	camX, camY := p.getCameraOffset()
+
+	// Convert mouse screen position to world position
+	p.mouseWorldX = float64(input.MouseX + camX)
+	p.mouseWorldY = float64(input.MouseY + camY)
+
+	// Handle attack (mouse click) - only when arrow selection UI is not active
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) && !p.arrowSelectUI.IsActive() {
+		pos := p.world.Position[p.world.PlayerID]
+		vel := p.world.Velocity[p.world.PlayerID]
+		mov := p.world.Movement[p.world.PlayerID]
+
+		arrowX := pos.PixelX() + 8
+		arrowY := pos.PixelY() + 10
+
+		// Player velocity is already in IU/substep
+		playerVX := vel.X
+		playerVY := vel.Y
+		if mov.OnGround {
+			playerVY = 0
+		}
+
+		p.spawnPlayerArrow(arrowX, arrowY, int(p.mouseWorldX), int(p.mouseWorldY), playerVX, playerVY)
+	}
+
+	// Update ECS systems
+	subSteps := 10
+	if p.arrowSelectUI.IsActive() {
+		subSteps = 1 // Slow motion during arrow select
+	}
+
+	// Update timers (once per frame)
+	ecs.UpdateTimers(p.world)
+
+	// Update player input (once per frame)
+	ecs.UpdatePlayerInput(p.world, ecs.InputState{
+		Left:         input.Left,
+		Right:        input.Right,
+		Up:           input.Up,
+		Down:         input.Down,
+		JumpPressed:  input.JumpPressed,
+		JumpReleased: input.JumpReleased,
+		Dash:         input.Dash,
+	}, p.physicsCfg)
+
+	// Apply gravity once per frame (before substep loop)
+	ecs.ApplyPlayerGravity(p.world, p.physicsCfg)
+	ecs.ApplyEnemyGravity(p.world, p.stage, p.physicsCfg.Gravity, p.physicsCfg.MaxFallSpeed)
+	ecs.ApplyProjectileGravity(p.world)
+	ecs.ApplyGoldGravity(p.world)
+
+	// Substep loop: movement and collision per substep
+	// subSteps=10 is normal speed, subSteps=1 is 10x slow motion
+	for i := 0; i < subSteps; i++ {
+		ecs.UpdatePlayerPhysics(p.world, p.stage, p.physicsCfg)
+		ecs.UpdateEnemyAI(p.world, p.stage, p.arrowCfg, p.physicsCfg)
+		ecs.UpdateProjectiles(p.world, p.stage)
+		ecs.UpdateGoldPhysics(p.world, p.stage)
+	}
+
+	// Collect gold
+	ecs.CollectGold(p.world)
+
+	// Update damage
+	knockbackForce := ecs.ToIUPerSubstep(p.config.Physics.Combat.Knockback.Force)
+	knockbackUp := ecs.ToIUPerSubstep(p.config.Physics.Combat.Knockback.UpForce)
+	iframeFrames := int(p.config.Physics.Combat.Iframes * 60)
+	result := ecs.UpdateDamage(p.world, knockbackForce, knockbackUp, iframeFrames)
+
+	// Handle damage feedback
+	if result.HitstopFrames > 0 {
+		p.hitstopFrames = result.HitstopFrames
+	}
+	if result.ScreenShake > 0 {
+		p.screenShakeX = result.ScreenShake
+		p.screenShakeY = result.ScreenShake
+	}
+
+	// Resolve enemy collisions
+	ecs.ResolveEnemyCollisions(p.world)
+
+	// Check spike damage
+	p.checkSpikeDamage()
+
+	// Decay screen shake
+	p.screenShakeX *= p.shakeDecay
+	p.screenShakeY *= p.shakeDecay
+
+	// Spawn enemies periodically (max 10 active enemies)
+	p.spawnTimer++
+	if p.spawnTimer >= 30 {
+		p.spawnTimer = 0
+		if p.world.CountEnemies() < 10 {
+			p.spawnEnemyOnRight()
+		}
+	}
+
+	// Check game over
+	health := p.world.Health[p.world.PlayerID]
+	if health.Current <= 0 {
+		p.state = state.StateGameOver
+		// Auto-save recording on game over
+		if p.recorder != nil {
+			p.saveRecording()
+		}
+	}
+}
+
+type inputState struct {
+	Left, Right, Up, Down bool
+	JumpPressed           bool
+	JumpReleased          bool
+	Dash                  bool
+	MouseX, MouseY        int
+}
+
+func (p *Playing) getInput() inputState {
+	mx, my := ebiten.CursorPosition()
+	return inputState{
+		Left:         ebiten.IsKeyPressed(ebiten.KeyA),
+		Right:        ebiten.IsKeyPressed(ebiten.KeyD),
+		Up:           ebiten.IsKeyPressed(ebiten.KeyW),
+		Down:         ebiten.IsKeyPressed(ebiten.KeyS),
+		JumpPressed:  inpututil.IsKeyJustPressed(ebiten.KeyW),
+		JumpReleased: inpututil.IsKeyJustReleased(ebiten.KeyW),
+		Dash:         inpututil.IsKeyJustPressed(ebiten.KeySpace),
+		MouseX:       mx,
+		MouseY:       my,
+	}
+}
+
+func (p *Playing) spawnPlayerArrow(x, y, targetX, targetY int, playerVX, playerVY int) {
+	arrowCfg := p.config.Entities.Projectiles["playerArrow"]
+	velocityInfluence := p.config.Physics.Projectile.VelocityInfluence
+
+	// Calculate direction (use float for normalization, convert to int at end)
+	dx := float64(targetX - x)
+	dy := float64(targetY - y)
+	dist := math.Sqrt(dx*dx + dy*dy)
+	if dist < 1 {
+		dist = 1
+	}
+
+	// Convert speed to IU/substep
+	speedIU := ecs.ToIUPerSubstep(arrowCfg.Physics.Speed)
+
+	// Calculate velocity components
+	vxf := (dx / dist) * float64(speedIU)
+	vyf := (dy / dist) * float64(speedIU)
+
+	// Add player velocity influence (velocityInfluence is 0.0-1.0)
+	vxf += float64(playerVX) * velocityInfluence
+	vyf += float64(playerVY) * velocityInfluence
+
+	// Convert to int
+	vx := int(vxf)
+	vy := int(vyf)
+
+	cfg := ecs.ProjectileConfig{
+		GravityAccel:  ecs.ToIUAccelPerFrame(arrowCfg.Physics.GravityAccel),
+		MaxFallSpeed:  ecs.ToIUPerSubstep(arrowCfg.Physics.MaxFallSpeed),
+		MaxRange:      int(arrowCfg.Physics.MaxRange),
+		Damage:        arrowCfg.Damage,
+		HitboxOffsetX: 2,
+		HitboxOffsetY: 2,
+		HitboxWidth:   12,
+		HitboxHeight:  4,
+		StuckDuration: 300, // 5 seconds
+	}
+
+	p.world.CreateProjectile(x, y, vx, vy, cfg, true)
+}
+
+func (p *Playing) getCameraOffset() (int, int) {
+	pos := p.world.Position[p.world.PlayerID]
+	camX := pos.PixelX() - p.screenW/2 + 8
+	camY := pos.PixelY() - p.screenH/2 + 12
 	if camX < 0 {
 		camX = 0
 	}
@@ -237,72 +521,7 @@ func (p *Playing) updatePlaying() {
 	if camY > maxCamY {
 		camY = maxCamY
 	}
-
-	// Convert mouse screen position to world position
-	p.mouseWorldX = float64(input.MouseX + camX)
-	p.mouseWorldY = float64(input.MouseY + camY)
-
-	// Handle attack (mouse click) - only when arrow selection UI is not active
-	if input.MouseClick && !p.arrowSelectUI.IsActive() {
-		arrowX := float64(p.player.PixelX() + 8)
-		arrowY := float64(p.player.PixelY() + 10)
-		// Convert player velocity from 100x scaled to pixels/sec
-		// Zero out VY when on ground (VY oscillates due to gravity/collision cycle)
-		playerVX := p.player.VX / entity.PositionScale
-		playerVY := p.player.VY / entity.PositionScale
-		if p.player.OnGround {
-			playerVY = 0
-		}
-		p.combatSystem.SpawnPlayerArrowToward(arrowX, arrowY, p.mouseWorldX, p.mouseWorldY, playerVX, playerVY)
-	}
-
-	// Update player with input
-	p.inputSystem.UpdatePlayer(p.player, input, p.dt)
-
-	// Update physics with sub-steps
-	// Normal: 10 sub-steps = full speed
-	// Slow motion: 1 sub-step = 1/10 speed
-	subSteps := 10
-	effectiveDt := p.dt
-	if p.arrowSelectUI.IsActive() {
-		subSteps = 1
-		effectiveDt = p.dt / 10 // Slow down combat too
-	}
-	p.physicsSystem.Update(p.player, p.dt, subSteps)
-
-	// Update combat (also slowed during arrow select)
-	p.combatSystem.Update(p.player, effectiveDt)
-
-	// Check spike damage
-	p.checkSpikeDamage()
-
-	// Decay screen shake
-	p.screenShakeX *= p.shakeDecay
-	p.screenShakeY *= p.shakeDecay
-
-	// Spawn enemies periodically (max 10 active enemies)
-	p.spawnTimer++
-	if p.spawnTimer >= 30 {
-		p.spawnTimer = 0
-		activeCount := 0
-		for _, e := range p.combatSystem.GetEnemies() {
-			if e.Active {
-				activeCount++
-			}
-		}
-		if activeCount < 10 {
-			p.spawnEnemyOnRight()
-		}
-	}
-
-	// Check game over
-	if p.player.Health <= 0 {
-		p.state = state.StateGameOver
-		// Auto-save recording on game over
-		if p.recorder != nil {
-			p.saveRecording()
-		}
-	}
+	return camX, camY
 }
 
 // saveRecording saves the current recording to file
@@ -324,20 +543,35 @@ func (p *Playing) saveRecording() {
 }
 
 func (p *Playing) checkSpikeDamage() {
-	if p.player.IsInvincible() {
+	playerID := p.world.PlayerID
+	playerData := p.world.PlayerData[playerID]
+	dash := p.world.Dash[playerID]
+
+	if playerData.IsInvincible(dash.Active) {
 		return
 	}
 
-	// Check feet hitbox against spikes (use pixel coordinates)
-	fx, fy, fw, fh := p.player.Hitbox.Feet.GetWorldRect(p.player.PixelX(), p.player.PixelY(), p.player.FacingRight, 16)
+	pos := p.world.Position[playerID]
+	hitbox := p.world.HitboxTrapezoid[playerID]
+	facing := p.world.Facing[playerID]
+
+	fx, fy, fw, fh := hitbox.Feet.GetWorldRect(pos.PixelX(), pos.PixelY(), facing.Right, 16)
 
 	for py := fy; py < fy+fh; py++ {
 		for px := fx; px < fx+fw; px++ {
 			tile := p.stage.GetTileAtPixel(px, py)
 			if tile.Type == entity.TileSpike {
-				p.player.Health -= tile.Damage
-				p.player.IframeTimer = p.config.Physics.Combat.Iframes
-				p.player.VY = -150 * entity.PositionScale // Bounce up (100x scaled)
+				health := p.world.Health[playerID]
+				health.Current -= tile.Damage
+				p.world.Health[playerID] = health
+
+				playerData.IframeTimer = int(p.config.Physics.Combat.Iframes * 60)
+				p.world.PlayerData[playerID] = playerData
+
+				vel := p.world.Velocity[playerID]
+				vel.Y = -150 * ecs.PositionScale
+				p.world.Velocity[playerID] = vel
+
 				p.screenShakeX = p.config.Physics.Feedback.ScreenShake.Intensity
 				p.screenShakeY = p.config.Physics.Feedback.ScreenShake.Intensity
 				return
@@ -347,19 +581,14 @@ func (p *Playing) checkSpikeDamage() {
 }
 
 func (p *Playing) spawnEnemyOnRight() {
-	// Spawn on the right side of the stage (2 tiles from the edge)
 	spawnX := (p.stage.Width - 3) * p.tileSize
 
-	// Try to find a valid Y position (not in a wall, on ground)
 	maxAttempts := 20
 	for i := 0; i < maxAttempts; i++ {
-		// Random Y between tile 1 and height-2 (avoid top/bottom walls)
 		tileY := 1 + p.rng.Intn(p.stage.Height-2)
 		spawnY := tileY * p.tileSize
 
-		// Check if this position is valid (not solid, has ground below)
 		if !p.stage.IsSolidAt(spawnX, spawnY) && !p.stage.IsSolidAt(spawnX, spawnY+p.tileSize-1) {
-			// Check if there's ground below (within a few tiles)
 			hasGround := false
 			for checkY := spawnY + p.tileSize; checkY < p.stage.Height*p.tileSize; checkY += p.tileSize {
 				if p.stage.IsSolidAt(spawnX, checkY) {
@@ -368,7 +597,7 @@ func (p *Playing) spawnEnemyOnRight() {
 				}
 			}
 			if hasGround {
-				p.combatSystem.SpawnEnemy(p.nextEnemyID, spawnX, spawnY, "berserker", false)
+				p.spawnEnemy(spawnX, spawnY, "berserker", false)
 				p.nextEnemyID++
 				return
 			}
@@ -381,38 +610,50 @@ func (p *Playing) restart() {
 	p.seed = time.Now().UnixNano()
 	p.rng = rand.New(rand.NewSource(p.seed))
 
-	p.player.SetPixelPos(p.stage.SpawnX, p.stage.SpawnY)
-	p.player.VX = 0
-	p.player.VY = 0
-	p.player.Health = p.player.MaxHealth
-	p.player.Gold = 0
-	p.player.IframeTimer = 1.0
-	p.player.CurrentArrow = entity.ArrowGray
+	// Create new world
+	p.world = ecs.NewWorld()
+
+	// Create player
+	playerCfg := p.config.Entities.Player
+	hitbox := ecs.HitboxTrapezoid{
+		Head: ecs.Hitbox{
+			OffsetX: playerCfg.Hitbox.Head.OffsetX,
+			OffsetY: playerCfg.Hitbox.Head.OffsetY,
+			Width:   playerCfg.Hitbox.Head.Width,
+			Height:  playerCfg.Hitbox.Head.Height,
+		},
+		Body: ecs.Hitbox{
+			OffsetX: playerCfg.Hitbox.Body.OffsetX,
+			OffsetY: playerCfg.Hitbox.Body.OffsetY,
+			Width:   playerCfg.Hitbox.Body.Width,
+			Height:  playerCfg.Hitbox.Body.Height,
+		},
+		Feet: ecs.Hitbox{
+			OffsetX: playerCfg.Hitbox.Feet.OffsetX,
+			OffsetY: playerCfg.Hitbox.Feet.OffsetY,
+			Width:   playerCfg.Hitbox.Feet.Width,
+			Height:  playerCfg.Hitbox.Feet.Height,
+		},
+	}
+	p.world.CreatePlayer(p.stage.SpawnX, p.stage.SpawnY, hitbox, playerCfg.Stats.MaxHealth)
+
 	p.state = state.StatePlaying
 
-	// Reset UI with config
+	// Reset UI
 	p.arrowSelectUI = entity.NewArrowSelectUIWithConfig(entity.ArrowSelectConfig{
 		Radius:      p.config.Physics.ArrowSelect.Radius,
 		MinDistance: p.config.Physics.ArrowSelect.MinDistance,
 		MaxFrame:    p.config.Physics.ArrowSelect.MaxFrame,
 	})
 
-	// Respawn enemies with new RNG
-	p.combatSystem = system.NewCombatSystem(p.config, p.stage, p.rng)
-	p.combatSystem.OnHitstop = func(frames int) {
-		p.hitstopFrames = frames
-	}
-	p.combatSystem.OnScreenShake = func(intensity float64) {
-		p.screenShakeX = intensity
-		p.screenShakeY = intensity
-	}
-	for i, spawn := range p.stageCfg.Enemies {
-		p.combatSystem.SpawnEnemy(entity.EntityID(i+1), spawn.X, spawn.Y, spawn.Type, spawn.FacingRight)
+	// Respawn enemies
+	for _, spawn := range p.stageCfg.Enemies {
+		p.spawnEnemy(spawn.X, spawn.Y, spawn.Type, spawn.FacingRight)
 	}
 
 	// Reset spawner
 	p.spawnTimer = 0
-	p.nextEnemyID = entity.EntityID(len(p.stageCfg.Enemies) + 1)
+	p.nextEnemyID = ecs.EntityID(len(p.stageCfg.Enemies) + 2)
 
 	// Reset recorder if recording
 	if p.recordFilename != "" {
@@ -423,18 +664,15 @@ func (p *Playing) restart() {
 
 // Draw renders the game screen
 func (p *Playing) Draw(screen *ebiten.Image) {
-	// Fill background
 	screen.Fill(colorBG)
 
-	// Calculate camera offset (use pixel coordinates)
-	camX := p.player.PixelX() - p.screenW/2 + 8
-	camY := p.player.PixelY() - p.screenH/2 + 12
+	camX, camY := p.getCameraOffset()
 
 	// Apply screen shake
 	camX += int(p.screenShakeX * (2*randFloat() - 1))
 	camY += int(p.screenShakeY * (2*randFloat() - 1))
 
-	// Clamp camera to stage bounds
+	// Clamp camera
 	maxCamX := p.stage.Width*p.tileSize - p.screenW
 	maxCamY := p.stage.Height*p.tileSize - p.screenH
 	if camX < 0 {
@@ -513,67 +751,75 @@ func (p *Playing) drawTiles(screen *ebiten.Image, camX, camY int) {
 }
 
 func (p *Playing) drawPlayer(screen *ebiten.Image, camX, camY int) {
-	playerScreenX := float64(p.player.PixelX() - camX)
-	playerScreenY := float64(p.player.PixelY() - camY)
+	pos := p.world.Position[p.world.PlayerID]
+	playerData := p.world.PlayerData[p.world.PlayerID]
+	facing := p.world.Facing[p.world.PlayerID]
+	dash := p.world.Dash[p.world.PlayerID]
+
+	playerScreenX := float64(pos.PixelX() - camX)
+	playerScreenY := float64(pos.PixelY() - camY)
 
 	playerW := float64(p.config.Entities.Player.Sprite.FrameWidth)
 	playerH := float64(p.config.Entities.Player.Sprite.FrameHeight)
 
 	// Flash when invincible
 	playerColor := colorPlayer
-	if p.player.IsInvincible() && int(p.player.IframeTimer*10)%2 == 0 {
+	if playerData.IsInvincible(dash.Active) && playerData.IframeTimer%6 < 3 {
 		playerColor = color.RGBA{255, 255, 255, 200}
 	}
 
 	ebitenutil.DrawRect(screen, playerScreenX, playerScreenY, playerW, playerH, playerColor)
 
-	// Draw hitbox debug (use pixel coordinates)
+	// Draw hitbox debug
 	if ebiten.IsKeyPressed(ebiten.KeyTab) {
-		hx, hy, hw, hh := p.player.Hitbox.Head.GetWorldRect(p.player.PixelX(), p.player.PixelY(), p.player.FacingRight, 16)
+		hitbox := p.world.HitboxTrapezoid[p.world.PlayerID]
+		hx, hy, hw, hh := hitbox.Head.GetWorldRect(pos.PixelX(), pos.PixelY(), facing.Right, 16)
 		ebitenutil.DrawRect(screen, float64(hx-camX), float64(hy-camY), float64(hw), float64(hh), colorHead)
 
-		fx, fy, fw, fh := p.player.Hitbox.Feet.GetWorldRect(p.player.PixelX(), p.player.PixelY(), p.player.FacingRight, 16)
+		fx, fy, fw, fh := hitbox.Feet.GetWorldRect(pos.PixelX(), pos.PixelY(), facing.Right, 16)
 		ebitenutil.DrawRect(screen, float64(fx-camX), float64(fy-camY), float64(fw), float64(fh), colorFeet)
 	}
 }
 
 func (p *Playing) drawEnemies(screen *ebiten.Image, camX, camY int) {
-	for _, enemy := range p.combatSystem.GetEnemies() {
-		if !enemy.Active {
-			continue
-		}
+	for id := range p.world.IsEnemy {
+		pos := p.world.Position[id]
+		ai := p.world.AI[id]
+		hitbox := p.world.Hitbox[id]
 
-		x := float64(enemy.X - camX)
-		y := float64(enemy.Y - camY)
+		x := float64(pos.PixelX() - camX)
+		y := float64(pos.PixelY() - camY)
 
 		// Flash on hit
 		c := colorEnemy
-		if enemy.HitTimer > 0 {
+		if ai.HitTimer > 0 {
 			c = color.RGBA{255, 255, 255, 255}
 		}
 
-		ebitenutil.DrawRect(screen, x, y, float64(enemy.HitboxWidth+4), float64(enemy.HitboxHeight+4), c)
+		ebitenutil.DrawRect(screen, x, y, float64(hitbox.Width+4), float64(hitbox.Height+4), c)
 	}
 }
 
 func (p *Playing) drawProjectiles(screen *ebiten.Image, camX, camY int) {
-	for _, proj := range p.combatSystem.GetProjectiles() {
-		if !proj.Active {
-			continue
-		}
+	playerData := p.world.PlayerData[p.world.PlayerID]
 
-		x := proj.X - float64(camX)
-		y := proj.Y - float64(camY)
+	for id := range p.world.IsProjectile {
+		pos := p.world.Position[id]
+		vel := p.world.Velocity[id]
+		proj := p.world.ProjectileData[id]
 
-		// Use current arrow color for player projectiles
+		x := float64(pos.PixelX() - camX)
+		y := float64(pos.PixelY() - camY)
+
+		// Determine color
 		var c color.RGBA
-		if proj.IsPlayer {
-			c = entity.ArrowColors[p.player.CurrentArrow]
+		if proj.IsPlayerOwned {
+			c = ecs.ArrowColors[playerData.CurrentArrow]
 		} else {
 			c = colorEnemyArrow
 		}
 
-		// Apply alpha for fading (pre-multiplied alpha)
+		// Apply alpha for fading
 		alpha := proj.GetAlpha()
 		c = color.RGBA{
 			uint8(float64(c.R) * alpha),
@@ -582,8 +828,8 @@ func (p *Playing) drawProjectiles(screen *ebiten.Image, camX, camY int) {
 			uint8(float64(c.A) * alpha),
 		}
 
-		// Draw rotated arrow: p.X, p.Y is the arrow tip
-		rot := proj.Rotation()
+		// Draw rotated arrow
+		rot := proj.Rotation(vel.X, vel.Y)
 		length := 12.0
 		prevX := x - math.Cos(rot)*length
 		prevY := y - math.Sin(rot)*length
@@ -594,40 +840,39 @@ func (p *Playing) drawProjectiles(screen *ebiten.Image, camX, camY int) {
 }
 
 func (p *Playing) drawGolds(screen *ebiten.Image, camX, camY int) {
-	for _, gold := range p.combatSystem.GetGolds() {
-		if !gold.Active {
-			continue
-		}
+	for id := range p.world.IsGold {
+		pos := p.world.Position[id]
 
-		x := gold.X - float64(camX)
-		y := gold.Y - float64(camY)
+		x := float64(pos.PixelX() - camX)
+		y := float64(pos.PixelY() - camY)
 
 		ebitenutil.DrawRect(screen, x, y, 8, 8, colorGold)
 	}
 }
 
 func (p *Playing) drawUI(screen *ebiten.Image) {
+	health := p.world.Health[p.world.PlayerID]
+	playerData := p.world.PlayerData[p.world.PlayerID]
+
 	// Health bar
 	barX := 10.0
 	barY := float64(p.screenH - 20)
 	barW := 100.0
 	barH := 10.0
 
-	// Background
 	ebitenutil.DrawRect(screen, barX, barY, barW, barH, colorHealthBG)
 
-	// Foreground
-	healthRatio := float64(p.player.Health) / float64(p.player.MaxHealth)
+	healthRatio := float64(health.Current) / float64(health.Max)
 	if healthRatio < 0 {
 		healthRatio = 0
 	}
 	ebitenutil.DrawRect(screen, barX, barY, barW*healthRatio, barH, colorHealthFG)
 
-	// Current arrow indicator (right side of HP bar)
-	p.drawArrowIcon(screen, barX+barW+10, barY+barH/2, p.player.CurrentArrow, 1.0, true)
+	// Current arrow indicator
+	p.drawArrowIcon(screen, barX+barW+10, barY+barH/2, playerData.CurrentArrow, 1.0, true)
 
 	// Gold
-	goldText := fmt.Sprintf("Gold: %d", p.player.Gold)
+	goldText := fmt.Sprintf("Gold: %d", playerData.Gold)
 	ebitenutil.DebugPrintAt(screen, goldText, 10, p.screenH-35)
 
 	// Controls
@@ -636,7 +881,6 @@ func (p *Playing) drawUI(screen *ebiten.Image) {
 }
 
 func (p *Playing) drawPauseOverlay(screen *ebiten.Image) {
-	// Semi-transparent overlay
 	overlay := color.RGBA{0, 0, 0, 128}
 	ebitenutil.DrawRect(screen, 0, 0, float64(p.screenW), float64(p.screenH), overlay)
 
@@ -645,59 +889,48 @@ func (p *Playing) drawPauseOverlay(screen *ebiten.Image) {
 }
 
 func (p *Playing) drawGameOverOverlay(screen *ebiten.Image) {
+	playerData := p.world.PlayerData[p.world.PlayerID]
+
 	overlay := color.RGBA{100, 0, 0, 180}
 	ebitenutil.DrawRect(screen, 0, 0, float64(p.screenW), float64(p.screenH), overlay)
 
-	text := fmt.Sprintf("GAME OVER\n\nGold collected: %d\n\nPress Z to restart", p.player.Gold)
+	text := fmt.Sprintf("GAME OVER\n\nGold collected: %d\n\nPress Z to restart", playerData.Gold)
 	ebitenutil.DebugPrintAt(screen, text, p.screenW/2-60, p.screenH/2-30)
 }
 
-// drawArrowSelectOverlay draws the dark overlay for arrow selection
 func (p *Playing) drawArrowSelectOverlay(screen *ebiten.Image) {
 	progress := p.arrowSelectUI.GetProgress()
-	easedProgress := math.Sin(progress * math.Pi / 2) // sin easing
+	easedProgress := math.Sin(progress * math.Pi / 2)
 
-	// Darken based on progress (max 50% opacity)
 	alpha := uint8(128 * easedProgress)
 	overlay := color.RGBA{0, 0, 0, alpha}
 	ebitenutil.DrawRect(screen, 0, 0, float64(p.screenW), float64(p.screenH), overlay)
 }
 
-// drawArrowSelectUI draws the radial arrow selection menu
 func (p *Playing) drawArrowSelectUI(screen *ebiten.Image) {
 	progress := p.arrowSelectUI.GetProgress()
-	easedProgress := math.Sin(progress * math.Pi / 2) // sin easing
+	easedProgress := math.Sin(progress * math.Pi / 2)
+	playerData := p.world.PlayerData[p.world.PlayerID]
 
-	// Draw each arrow icon in the 4 directions
 	for dir := entity.DirRight; dir <= entity.DirDown; dir++ {
-		arrowType := p.player.EquippedArrows[int(dir)]
+		arrowType := playerData.EquippedArrows[int(dir)]
 		x, y := p.arrowSelectUI.GetIconPosition(dir, easedProgress)
 
-		// Determine brightness
-		// Selected (current) arrow = 100%, unselected = 70%, highlighted = 100%
 		brightness := 0.7
-		if arrowType == p.player.CurrentArrow {
+		if arrowType == playerData.CurrentArrow {
 			brightness = 1.0
 		}
 		if dir == p.arrowSelectUI.Highlighted {
 			brightness = 1.0
 		}
 
-		// Determine scale (highlighted = larger)
-		scale := 1.0
-		if dir == p.arrowSelectUI.Highlighted {
-			scale = 1.3
-		}
-
-		p.drawArrowIcon(screen, x, y, arrowType, brightness*easedProgress, scale > 1.0)
+		p.drawArrowIcon(screen, x, y, arrowType, brightness*easedProgress, dir == p.arrowSelectUI.Highlighted)
 	}
 }
 
-// drawArrowIcon draws an arrow icon (line with tip) at the given position
-func (p *Playing) drawArrowIcon(screen *ebiten.Image, x, y float64, arrowType entity.ArrowType, brightness float64, large bool) {
-	baseColor := entity.ArrowColors[arrowType]
+func (p *Playing) drawArrowIcon(screen *ebiten.Image, x, y float64, arrowType ecs.ArrowType, brightness float64, large bool) {
+	baseColor := ecs.ArrowColors[arrowType]
 
-	// Apply brightness (and alpha based on easedProgress for animation)
 	c := color.RGBA{
 		uint8(float64(baseColor.R) * brightness),
 		uint8(float64(baseColor.G) * brightness),
@@ -705,22 +938,18 @@ func (p *Playing) drawArrowIcon(screen *ebiten.Image, x, y float64, arrowType en
 		uint8(float64(baseColor.A) * brightness),
 	}
 
-	// Arrow dimensions
 	length := 12.0
 	if large {
 		length = 16.0
 	}
 
-	// Arrow pointing right (0 degrees)
 	tipX := x + length/2
 	tipY := y
 	tailX := x - length/2
 	tailY := y
 
-	// Draw arrow line
 	ebitenutil.DrawLine(screen, tailX, tailY, tipX, tipY, c)
 
-	// Draw arrow tip (small triangle approximated with lines)
 	tipSize := 4.0
 	if large {
 		tipSize = 5.0
@@ -728,19 +957,25 @@ func (p *Playing) drawArrowIcon(screen *ebiten.Image, x, y float64, arrowType en
 	ebitenutil.DrawLine(screen, tipX, tipY, tipX-tipSize, tipY-tipSize/2, c)
 	ebitenutil.DrawLine(screen, tipX, tipY, tipX-tipSize, tipY+tipSize/2, c)
 
-	// Draw small square at tip for visibility
 	ebitenutil.DrawRect(screen, tipX-1, tipY-1, 2, 2, c)
 }
 
 func (p *Playing) drawTrajectory(screen *ebiten.Image, camX, camY int) {
-	// Get arrow physics config
-	speed, gravity, maxFall, maxRange, velocityInfluence := p.combatSystem.GetArrowConfig()
+	arrowCfg := p.config.Entities.Projectiles["playerArrow"]
+	speed := arrowCfg.Physics.Speed
+	gravity := arrowCfg.Physics.GravityAccel
+	maxFall := arrowCfg.Physics.MaxFallSpeed
+	maxRange := arrowCfg.Physics.MaxRange
+	velocityInfluence := p.config.Physics.Projectile.VelocityInfluence
 
-	// Arrow start position (use pixel coordinates)
-	startX := float64(p.player.PixelX() + 8)
-	startY := float64(p.player.PixelY() + 10)
+	pos := p.world.Position[p.world.PlayerID]
+	vel := p.world.Velocity[p.world.PlayerID]
+	mov := p.world.Movement[p.world.PlayerID]
+	playerData := p.world.PlayerData[p.world.PlayerID]
 
-	// Calculate initial velocity toward mouse
+	startX := float64(pos.PixelX() + 8)
+	startY := float64(pos.PixelY() + 10)
+
 	dx := p.mouseWorldX - startX
 	dy := p.mouseWorldY - startY
 	dist := math.Sqrt(dx*dx + dy*dy)
@@ -750,19 +985,15 @@ func (p *Playing) drawTrajectory(screen *ebiten.Image, camX, camY int) {
 	vx := (dx / dist) * speed
 	vy := (dy / dist) * speed
 
-	// Add player velocity with influence multiplier
-	// Note: When on ground, VY oscillates due to gravity/collision cycle,
-	// so we zero it out for stable trajectory prediction
-	playerVX := p.player.VX / entity.PositionScale
-	playerVY := p.player.VY / entity.PositionScale
-	if p.player.OnGround {
+	playerVX := float64(vel.X) / float64(ecs.PositionScale)
+	playerVY := float64(vel.Y) / float64(ecs.PositionScale)
+	if mov.OnGround {
 		playerVY = 0
 	}
 	vx += playerVX * velocityInfluence
 	vy += playerVY * velocityInfluence
 
-	// Trajectory color - white with slight tint of current arrow color
-	arrowColor := entity.ArrowColors[p.player.CurrentArrow]
+	arrowColor := ecs.ArrowColors[playerData.CurrentArrow]
 	trajectoryColor := color.RGBA{
 		uint8((int(arrowColor.R) + 255) / 2),
 		uint8((int(arrowColor.G) + 255) / 2),
@@ -770,7 +1001,6 @@ func (p *Playing) drawTrajectory(screen *ebiten.Image, camX, camY int) {
 		200,
 	}
 
-	// Simulate trajectory
 	x, y := startX, startY
 	dt := 1.0 / 60.0
 	dotSpacing := 8.0
@@ -778,32 +1008,26 @@ func (p *Playing) drawTrajectory(screen *ebiten.Image, camX, camY int) {
 	dotSize := 3.0
 
 	for traveled := 0.0; traveled < maxRange; {
-		// Apply gravity
 		vy += gravity * dt
 		if vy > maxFall {
 			vy = maxFall
 		}
 
-		// Previous position
 		prevX, prevY := x, y
 
-		// Move
 		x += vx * dt
 		y += vy * dt
 
-		// Calculate distance moved this step
 		stepDx := x - prevX
 		stepDy := y - prevY
 		stepDist := math.Sqrt(stepDx*stepDx + stepDy*stepDy)
 		traveled += stepDist
 		accumulated += stepDist
 
-		// Check wall collision
 		if p.stage.IsSolidAt(int(x), int(y)) {
 			break
 		}
 
-		// Draw dot at intervals
 		if accumulated >= dotSpacing {
 			accumulated -= dotSpacing
 			screenX := x - float64(camX) - dotSize/2
@@ -823,7 +1047,7 @@ func (p *Playing) OnExit() {
 	p.saveRecording()
 }
 
-// Layout returns the game's screen dimensions (used by game.Game)
+// Layout returns the game's screen dimensions
 func (p *Playing) Layout(outsideWidth, outsideHeight int) (int, int) {
 	return p.screenW, p.screenH
 }
@@ -834,3 +1058,4 @@ func randFloat() float64 {
 	randState = randState*1103515245 + 12345
 	return float64(randState&0x7fffffff) / float64(0x7fffffff)
 }
+

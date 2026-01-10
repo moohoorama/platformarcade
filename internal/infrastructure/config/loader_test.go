@@ -8,7 +8,7 @@ import (
 )
 
 func TestLoader_LoadPhysics(t *testing.T) {
-	loader := NewLoader("../../../configs")
+	loader := NewLoader("../../../cmd/game/configs")
 
 	cfg, err := loader.LoadPhysics()
 	require.NoError(t, err)
@@ -22,7 +22,7 @@ func TestLoader_LoadPhysics(t *testing.T) {
 }
 
 func TestLoader_LoadEntities(t *testing.T) {
-	loader := NewLoader("../../../configs")
+	loader := NewLoader("../../../cmd/game/configs")
 
 	cfg, err := loader.LoadEntities()
 	require.NoError(t, err)
@@ -43,7 +43,7 @@ func TestLoader_LoadEntities(t *testing.T) {
 }
 
 func TestLoader_LoadStage(t *testing.T) {
-	loader := NewLoader("../../../configs")
+	loader := NewLoader("../../../cmd/game/configs")
 
 	cfg, err := loader.LoadStage("demo")
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestLoader_LoadStage(t *testing.T) {
 }
 
 func TestLoader_LoadAll(t *testing.T) {
-	loader := NewLoader("../../../configs")
+	loader := NewLoader("../../../cmd/game/configs")
 
 	cfg, err := loader.LoadAll()
 	require.NoError(t, err)

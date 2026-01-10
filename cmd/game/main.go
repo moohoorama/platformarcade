@@ -8,7 +8,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/younwookim/mg/internal/application/game"
 	"github.com/younwookim/mg/internal/application/scene/playing"
-	"github.com/younwookim/mg/internal/application/system"
+	"github.com/younwookim/mg/internal/domain/entity"
 	"github.com/younwookim/mg/internal/infrastructure/config"
 )
 
@@ -35,7 +35,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load stage: %v", err)
 	}
-	stage := system.LoadStage(stageCfg)
+	stage := entity.LoadStage(stageCfg)
 
 	// Create initial scene (Playing)
 	playingScene := playing.New(cfg, stageCfg, stage, recordFilename)

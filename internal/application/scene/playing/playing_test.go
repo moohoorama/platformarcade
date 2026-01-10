@@ -5,10 +5,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/younwookim/mg/internal/application/replay"
 	"github.com/younwookim/mg/internal/application/scene"
-	"github.com/younwookim/mg/internal/application/system"
 	"github.com/younwookim/mg/internal/domain/entity"
+	"github.com/younwookim/mg/internal/ecs"
 	"github.com/younwookim/mg/internal/infrastructure/config"
 )
 
@@ -21,10 +20,11 @@ func createTestConfig() *config.GameConfig {
 				MaxFallSpeed: 400,
 			},
 			Movement: config.MovementConfig{
-				Acceleration: 2000,
-				Deceleration: 2500,
-				MaxSpeed:     120,
-				AirControl:   0.8,
+				Acceleration:    2000,
+				Deceleration:    2500,
+				MaxSpeed:        120,
+				AirControl:      0.8,
+				TurnaroundBoost: 1.5,
 			},
 			Jump: config.JumpConfig{
 				Force:                  280,
@@ -39,9 +39,16 @@ func createTestConfig() *config.GameConfig {
 				FallMultiplier: 1.6,
 			},
 			Dash: config.DashConfig{
-				Speed:    300,
-				Duration: 0.15,
-				Cooldown: 0.5,
+				Speed:           300,
+				Duration:        0.15,
+				Cooldown:        0.5,
+				IframesDuration: 0.1,
+			},
+			Collision: config.CollisionConfig{
+				CornerCorrection: config.MarginConfig{
+					Enabled: true,
+					Margin:  4,
+				},
 			},
 			Display: config.DisplayConfig{
 				ScreenWidth:  320,
@@ -57,11 +64,19 @@ func createTestConfig() *config.GameConfig {
 			},
 			Combat: config.CombatConfig{
 				Iframes: 1.0,
+				Knockback: config.KnockbackConfig{
+					Force:        100,
+					UpForce:      50,
+					StunDuration: 0.2,
+				},
 			},
 			ArrowSelect: config.ArrowSelectConfig{
 				Radius:      40,
 				MinDistance: 10,
 				MaxFrame:    10,
+			},
+			Projectile: config.ProjectileBehaviorConfig{
+				VelocityInfluence: 0.3,
 			},
 		},
 		Entities: &config.EntitiesConfig{
@@ -77,6 +92,28 @@ func createTestConfig() *config.GameConfig {
 				Sprite: config.SpriteConfig{
 					FrameWidth:  16,
 					FrameHeight: 24,
+				},
+			},
+			Projectiles: map[string]config.ProjectileConfig{
+				"playerArrow": {
+					Physics: config.ProjectilePhysicsConfig{
+						Speed:          300,
+						LaunchAngleDeg: 20,
+						GravityAccel:   400,
+						MaxFallSpeed:   300,
+						MaxRange:       200,
+					},
+					Damage: 25,
+				},
+				"enemyArrow": {
+					Physics: config.ProjectilePhysicsConfig{
+						Speed:          220,
+						LaunchAngleDeg: 0,
+						GravityAccel:   0,
+						MaxFallSpeed:   0,
+						MaxRange:       300,
+					},
+					Damage: 10,
 				},
 			},
 		},
@@ -130,8 +167,11 @@ func TestNewPlaying(t *testing.T) {
 	p := New(cfg, stageCfg, stage, "")
 
 	assert.NotNil(t, p)
-	assert.NotNil(t, p.player)
-	assert.Equal(t, 100, p.player.MaxHealth)
+	assert.NotNil(t, p.world)
+
+	// Check player was created
+	health := p.world.Health[p.world.PlayerID]
+	assert.Equal(t, 100, health.Max)
 }
 
 func TestPlaying_Update_ReturnsNilWhenPlaying(t *testing.T) {
@@ -191,7 +231,7 @@ func TestPlaying_WithRecorder(t *testing.T) {
 	assert.Equal(t, 1, p.recorder.FrameCount())
 }
 
-func TestPlaying_SimulateWithReplay(t *testing.T) {
+func TestPlaying_SimulateWithECS(t *testing.T) {
 	cfg := createTestConfig()
 	stageCfg := createTestStageConfig()
 	stage := createTestStage()
@@ -199,31 +239,29 @@ func TestPlaying_SimulateWithReplay(t *testing.T) {
 	p := New(cfg, stageCfg, stage, "")
 
 	// Player starts on ground (spawn position is on ground level)
-	p.player.OnGround = true
-	p.player.VY = 0
+	mov := p.world.Movement[p.world.PlayerID]
+	mov.OnGround = true
+	p.world.Movement[p.world.PlayerID] = mov
 
-	// Create test replay data
-	replayData := replay.CreateTestReplayData(60, 160, 120)
-	replayer := replay.NewReplayer(replayData)
+	vel := p.world.Velocity[p.world.PlayerID]
+	vel.Y = 0
+	p.world.Velocity[p.world.PlayerID] = vel
 
-	// Simulate with replay
-	inputSystem := system.NewInputSystem(cfg.Physics)
-	physicsSystem := system.NewPhysicsSystem(cfg.Physics, stage)
-	dt := 1.0 / 60.0
-
-	for {
-		input, ok := replayer.GetInput()
-		if !ok {
-			break
+	// Simulate a few frames with no input
+	for i := 0; i < 60; i++ {
+		ecs.UpdateTimers(p.world)
+		ecs.UpdatePlayerInput(p.world, ecs.InputState{}, p.physicsCfg)
+		for j := 0; j < 10; j++ {
+			ecs.UpdatePlayerPhysics(p.world, p.stage, p.physicsCfg)
 		}
-
-		inputSystem.UpdatePlayer(p.player, input, dt)
-		physicsSystem.Update(p.player, dt, 10)
 	}
 
 	// Player should still be on ground after idle simulation
-	assert.True(t, p.player.OnGround)
-	assert.Equal(t, 0.0, p.player.VY)
+	mov = p.world.Movement[p.world.PlayerID]
+	assert.True(t, mov.OnGround)
+
+	vel = p.world.Velocity[p.world.PlayerID]
+	assert.Equal(t, 0, vel.Y)
 }
 
 func TestRecorder_StopAndIsRecording(t *testing.T) {
@@ -241,7 +279,7 @@ func TestRecorder_DoesNotRecordWhenStopped(t *testing.T) {
 	r.Stop()
 
 	// Should not record when stopped
-	input := system.InputState{Left: true}
+	input := RecordableInput{Left: true}
 	r.RecordFrame(input)
 
 	assert.Equal(t, 0, r.FrameCount())
@@ -256,7 +294,7 @@ func TestPlaying_Draw(t *testing.T) {
 
 	// Draw requires a valid screen - test that the struct is initialized correctly
 	assert.NotNil(t, p)
-	assert.NotNil(t, p.player)
+	assert.NotNil(t, p.world)
 	assert.NotNil(t, p.stage)
 	// Note: Actual Draw test would require ebiten.NewImage which needs graphics context
 }

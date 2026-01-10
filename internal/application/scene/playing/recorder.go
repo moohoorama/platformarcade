@@ -7,8 +7,20 @@ import (
 	"time"
 
 	"github.com/younwookim/mg/internal/application/replay"
-	"github.com/younwookim/mg/internal/application/system"
 )
+
+// RecordableInput is the input interface for recording
+type RecordableInput struct {
+	Left, Right, Up, Down bool
+	Jump                  bool
+	JumpPressed           bool
+	JumpReleased          bool
+	Dash                  bool
+	MouseX, MouseY        int
+	MouseClick            bool
+	RightClickPressed     bool
+	RightClickReleased    bool
+}
 
 // Recorder handles input recording for replay
 type Recorder struct {
@@ -33,7 +45,7 @@ func NewRecorder(seed int64, stage string) *Recorder {
 }
 
 // RecordFrame records a single frame's input
-func (r *Recorder) RecordFrame(input system.InputState) {
+func (r *Recorder) RecordFrame(input RecordableInput) {
 	if !r.recording {
 		return
 	}

@@ -50,8 +50,8 @@
   "combat": {
     "iframes": 1.0,
     "knockback": {
-      "force": 150,
-      "upForce": 80,
+      "force": 600,
+      "upForce": 320,
       "stunDuration": 0.2
     }
   },
